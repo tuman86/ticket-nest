@@ -164,7 +164,7 @@ Customer (or guest via OTP) cancels from "My bookings"; the refund amount is sho
 
 - Booking states: `HELD → PENDING_PAYMENT → CONFIRMED → CANCELLED / EXPIRED / REFUND_PENDING / REFUNDED` **[state set to be finalized in design]**.
 - Stripe test mode, PaymentIntents, webhook-driven confirmation, idempotency keys on all payment and refund calls.
-- Currency **INR** **[Assumption]**.
+- Currency **USD**.
 - **Convenience fee:** 3% of ticket subtotal, configurable by admin **[Assumption]**.
 - **Payment edge cases:**
   - Payment succeeds but the hold already expired and the seats are gone → automatic full refund.
@@ -195,7 +195,7 @@ Rules:
 - **Partial cancellation:** allowed for buses and trains (per passenger); movies are all-or-nothing.
 - **Operator-initiated cancellation:** 100% refund including fees, automatic, with notifications to all affected customers.
 - **No-show:** no refund.
-- **Support agents** may issue goodwill refunds that override the policy, up to a per-booking cap (default ₹2,000). Above the cap requires admin approval. Every refund is audit-logged **[Assumption: cap value]**.
+- **Support agents** may issue goodwill refunds that override the policy, up to a per-booking cap (default $25). Above the cap requires admin approval. Every refund is audit-logged **[Assumption: cap value]**.
 - **Refund mechanics:** back to the original payment method via Stripe, asynchronous, with status `PENDING → SUCCEEDED / FAILED`. The UI and emails show an expected timeline (e.g. "5–7 business days").
 - No rescheduling; customers cancel and rebook.
 
@@ -292,7 +292,7 @@ All three verticals are in the MVP, so ordering the build movies → buses → t
 | Scope is large for a solo developer. | Build vertically in the order above; keep services thin initially. |
 | Train segment booking is complex. | Build it last on top of a proven hold/booking core; spike the data model early. |
 | Distributed consistency bugs. | Outbox, idempotency keys, saga tests with Testcontainers. |
-| Stripe availability in INR/India for test accounts. | Confirm account region early (see open questions). |
+| Stripe account region and USD support for test accounts. | Confirm account region early (see open questions). |
 | Kubernetes on AWS adds cost and time. | Containerize and Compose first; deploy last; use a small cluster. |
 
 ---
@@ -323,11 +323,11 @@ See section 1.2.
 
 **Assumptions to confirm**
 
-1. Currency is INR.
+1. Currency is USD (confirmed by the owner).
 2. Convenience fee is 3% of the ticket subtotal, non-refundable on customer cancellation.
 3. The refund tier table in section 5.5 is accepted as proposed (including the flat train per-passenger fee amount, which is not yet set).
 4. Refund policies are platform defaults with an admin-set per-operator override.
-5. Support agent goodwill refund cap is ₹2,000 per booking; above it needs admin approval.
+5. Support agent goodwill refund cap is $25 per booking; above it needs admin approval.
 6. Reminders go out 24 h and 2 h before the event or departure.
 7. "Push" means web push.
 8. Per-user notification channel preferences exist.
@@ -339,7 +339,7 @@ See section 1.2.
 **Open questions**
 
 1. Which SMS provider (Twilio, MSG91, other)?
-2. Is your Stripe account in a region that supports INR, or should the demo use USD/another currency?
+2. Does your Stripe account support USD charges (it does in test mode)? Confirm the account region early.
 3. Is GST or tax display needed?
 4. How should operators build seat layouts: a visual editor, or JSON/template upload?
 5. How are train stations ordered and priced per segment (fare table vs. distance-based)?

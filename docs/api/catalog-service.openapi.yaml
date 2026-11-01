@@ -1,0 +1,2572 @@
+openapi: 3.1.0
+info:
+  title: TicketNest Catalog Service API
+  version: 1.0.0
+  summary: Operators, venues, movies, routes, trains, schedules, cancellation policy, and search.
+  description: |
+    Public API of the **catalog service**. It owns the *definition* of what can be
+    booked (operators, venues and screens, bus and coach layouts, stations,
+    routes, trains, movies, schedules, prices) plus cancellation policy and fee
+    configuration, and serves search. It does **not** own seat availability or
+    bookings; those belong to the booking service.
+
+    ## Conventions
+    Shared conventions (errors, pagination, headers, tracing) are defined in
+    [`common.yaml`](./common.yaml): `/v1` versioning, camelCase JSON,
+    RFC 9457 `application/problem+json`, cursor pagination (`limit` + `cursor`
+    returning `{ data, page }`), `PATCH` as JSON Merge Patch, and optional
+    `If-Match` / `ETag`. Money is `{ amountMinor, currency }` in cents (USD).
+    Timestamps are UTC; `timezone` fields carry the IANA zone to display them in.
+
+    ## Access model
+    * **Public reads** (no token needed): movies, venues, screens, stations,
+      routes, trains, published schedules, search, cancellation policies. Marked
+      with optional auth; a staff token widens what is returned.
+    * **Staff writes** need a permission (see `x-permissions` on each operation).
+    * **Tenancy:** operator users act only on resources whose `operatorId`
+      equals the `tenantId` claim of their token. Other tenants' resources answer
+      `404`. Admins act on any tenant and must pass `operatorId` when creating
+      operator-owned resources.
+
+    ## Schedules
+    A *schedule* is one sellable occurrence, with a `vertical` discriminator:
+    `MOVIE` (a show), `BUS` (a trip) or `TRAIN` (a run). Lifecycle:
+
+    `DRAFT -> PUBLISHED -> CANCELLED | COMPLETED`
+
+    * Publishing emits `schedule.published`; the booking service then
+      materialises seat inventory. Cancelling emits `schedule.cancelled`; the
+      booking service refunds every confirmed booking in full (including fees)
+      **asynchronously**, so the `200` response does not mean refunds finished.
+    * Prices are fixed once a schedule has bookings (`schedule-has-bookings`).
+    * Event contracts live in `packages/contracts`, not in this document.
+
+    ## Domain problem types
+    | type (suffix)              | status | meaning |
+    |----------------------------|--------|---------|
+    | `schedule-has-bookings`    | 409 | schedule already has claims or bookings; field cannot change / cannot be deleted |
+    | `invalid-state-transition` | 409 | e.g. publishing a cancelled schedule |
+    | `overlapping-schedule`     | 409 | same screen or vehicle already scheduled in that window |
+    | `resource-in-use`          | 409 | referenced by a schedule or another resource |
+    | `duplicate-resource`       | 409 | unique key already taken (station code, train number, ...) |
+    | `incomplete-fare-table`    | 422 | train run fare table misses a class or station pair |
+    | `invalid-layout`           | 422 | seat ids not unique or positions outside the grid |
+    | `invalid-policy-tiers`     | 422 | tiers not strictly descending or last tier is not 0 hours |
+    | `operator-required`        | 422 | admin created an operator-owned resource without `operatorId` |
+    | `schedule-in-past`         | 422 | start is before the sales cutoff |
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+
+servers:
+  - url: https://api.ticketnest.example
+    description: Production (via api-gateway)
+  - url: https://api.staging.ticketnest.example
+    description: Staging
+  - url: http://localhost:4000
+    description: Local (docker compose, via api-gateway)
+
+tags:
+  - name: Search
+    description: Cross-vertical search for customers.
+  - name: Schedules
+    description: Shows, bus trips and train runs.
+  - name: Movies
+    description: Shared movie catalogue.
+  - name: Venues and screens
+    description: Cinemas and their screens with seat layouts.
+  - name: Stations and routes
+    description: Stations, bus stops, and ordered routes.
+  - name: Buses and trains
+    description: Seat layouts and train definitions.
+  - name: Operators
+    description: Tenant onboarding (admin).
+  - name: Policy and fees
+    description: Cancellation policies and the convenience fee.
+  - name: Operations
+    description: Liveness and readiness probes.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      tags: [Operations]
+      operationId: getLiveness
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /readyz:
+    get:
+      tags: [Operations]
+      operationId: getReadiness
+      summary: Readiness probe
+      description: Checks the database and broker. Used by Kubernetes.
+      security: []
+      responses:
+        '200':
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+        '503': { $ref: './common.yaml#/components/responses/ServiceUnavailable' }
+
+  # -------------------------------------------------------------- search ---
+  /v1/search:
+    get:
+      tags: [Search]
+      operationId: search
+      summary: Cross-vertical search
+      description: |
+        Free-text and filtered search across movies and published schedules.
+        Filters are Postgres-backed in the MVP. Results are ordered by relevance
+        for `q`, otherwise by `startsAt` ascending; the cursor is valid only for
+        the same query. `availability` on schedule hits is best effort and may be
+        `null`.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - name: q
+          in: query
+          description: Text matched against movie titles, station and city names, train numbers and names.
+          schema: { type: string, minLength: 2, maxLength: 100 }
+        - name: vertical
+          in: query
+          description: Restrict to these verticals. Repeat the parameter for several.
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/Vertical' }
+        - $ref: '#/components/parameters/City'
+        - $ref: '#/components/parameters/FromStationId'
+        - $ref: '#/components/parameters/ToStationId'
+        - $ref: '#/components/parameters/Date'
+        - $ref: '#/components/parameters/MovieIdFilter'
+        - $ref: '#/components/parameters/OperatorIdFilter'
+        - $ref: '#/components/parameters/ClassCode'
+        - $ref: '#/components/parameters/PriceMinMinor'
+        - $ref: '#/components/parameters/PriceMaxMinor'
+      responses:
+        '200':
+          description: A page of hits.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResultList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # ----------------------------------------------------------- schedules ---
+  /v1/schedules:
+    get:
+      tags: [Schedules]
+      operationId: listSchedules
+      summary: List schedules
+      description: |
+        Anonymous and customer callers receive only `PUBLISHED` schedules that
+        have not started. Staff with `schedule:read` also see drafts and past or
+        cancelled schedules of their tenant (admins: all) and may use `status`.
+        Ordered by `startsAt` ascending, then `id`.
+      security: [{}, { bearerAuth: [] }]
+      x-permissions: ['schedule:read (to see non-published)']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - name: vertical
+          in: query
+          schema: { $ref: '#/components/schemas/Vertical' }
+        - name: status
+          in: query
+          description: Staff only; ignored for anonymous callers.
+          schema: { $ref: '#/components/schemas/ScheduleStatus' }
+        - $ref: '#/components/parameters/OperatorIdFilter'
+        - $ref: '#/components/parameters/MovieIdFilter'
+        - name: venueId
+          in: query
+          schema: { $ref: './common.yaml#/components/schemas/Id' }
+        - name: screenId
+          in: query
+          schema: { $ref: './common.yaml#/components/schemas/Id' }
+        - name: routeId
+          in: query
+          schema: { $ref: './common.yaml#/components/schemas/Id' }
+        - name: trainId
+          in: query
+          schema: { $ref: './common.yaml#/components/schemas/Id' }
+        - $ref: '#/components/parameters/City'
+        - $ref: '#/components/parameters/FromStationId'
+        - $ref: '#/components/parameters/ToStationId'
+        - $ref: '#/components/parameters/Date'
+        - name: startsAfter
+          in: query
+          schema: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        - name: startsBefore
+          in: query
+          schema: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        - $ref: '#/components/parameters/ClassCode'
+        - $ref: '#/components/parameters/PriceMinMinor'
+        - $ref: '#/components/parameters/PriceMaxMinor'
+      responses:
+        '200':
+          description: A page of schedules.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduleList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Schedules]
+      operationId: createSchedule
+      summary: Create a schedule (draft)
+      description: |
+        Creates a `DRAFT`. The body is discriminated by `vertical`. Nothing is
+        sellable until it is published.
+      x-permissions: ['schedule:manage']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSchedule' }
+            examples:
+              movieShow:
+                summary: Movie show
+                value:
+                  vertical: MOVIE
+                  movieId: 6a1d0c52-2a4e-4a50-8a0a-1f0a2b3c4d5e
+                  screenId: 9b2e1d63-3b5f-4b61-9b1b-2a1b3c4d5e6f
+                  startsAt: '2026-11-14T13:30:00Z'
+                  language: Hindi
+                  format: TWO_D
+                  price: { amountMinor: 2500, currency: USD }
+      responses:
+        '201':
+          description: Draft created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Schedule' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404':
+          description: A referenced screen, route, layout, train or movie does not exist for this tenant.
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '409':
+          description: '`overlapping-schedule`.'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '422':
+          description: Validation error, including `incomplete-fare-table`, `schedule-in-past`, `operator-required`.
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/ValidationProblem' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/schedules/{scheduleId}:
+    parameters:
+      - $ref: '#/components/parameters/ScheduleId'
+    get:
+      tags: [Schedules]
+      operationId: getSchedule
+      summary: Get a schedule
+      description: Anonymous callers can read only `PUBLISHED` schedules; others answer `404`.
+      security: [{}, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: The schedule.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Schedule' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Schedules]
+      operationId: updateSchedule
+      summary: Update a schedule
+      description: |
+        Drafts can change any listed field. A `PUBLISHED` schedule with no
+        bookings can change `startsAt` and prices; once it has bookings, changing
+        `startsAt` or prices returns `schedule-has-bookings`. Cancelled and
+        completed schedules are immutable.
+      x-permissions: ['schedule:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateSchedule' }
+      responses:
+        '200':
+          description: Updated schedule.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Schedule' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409':
+          description: '`schedule-has-bookings`, `invalid-state-transition`, or `overlapping-schedule`.'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Schedules]
+      operationId: deleteSchedule
+      summary: Delete a draft schedule
+      description: Only `DRAFT` schedules can be deleted. Use cancel for published ones.
+      x-permissions: ['schedule:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/schedules/{scheduleId}/publish:
+    post:
+      tags: [Schedules]
+      operationId: publishSchedule
+      summary: Publish a draft
+      description: |
+        Validates the schedule (layout present, complete fares, start after the
+        sales cutoff, no overlap), freezes the effective cancellation policy and
+        fee onto it, and emits `schedule.published`. Idempotent: publishing an
+        already published schedule returns it unchanged.
+      x-permissions: ['schedule:manage']
+      parameters:
+        - $ref: '#/components/parameters/ScheduleId'
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: The published schedule.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Schedule' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409':
+          description: '`invalid-state-transition` or `overlapping-schedule`.'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/schedules/{scheduleId}/cancel:
+    post:
+      tags: [Schedules]
+      operationId: cancelSchedule
+      summary: Cancel a show, trip or run
+      description: |
+        Marks the schedule `CANCELLED` and emits `schedule.cancelled`. The booking
+        service then refunds **every** confirmed booking in full including fees
+        and notifies the customers. That work is asynchronous: this call returns
+        as soon as the schedule is cancelled. Idempotent: cancelling an already
+        cancelled schedule returns it unchanged.
+      x-permissions: ['schedule:cancel']
+      parameters:
+        - $ref: '#/components/parameters/ScheduleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CancelScheduleRequest' }
+      responses:
+        '200':
+          description: The cancelled schedule.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Schedule' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409':
+          description: '`invalid-state-transition` (draft or completed schedule).'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/schedules/{scheduleId}/seat-layout:
+    get:
+      tags: [Schedules]
+      operationId: getScheduleSeatLayout
+      summary: Seat layout(s) used by a schedule
+      description: |
+        The geometry needed to draw the seat map: one layout for a show or bus
+        trip, one per coach for a train run. Live availability and holds come
+        from the booking service; combine the two client-side.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ScheduleId'
+      responses:
+        '200':
+          description: Layout(s).
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: Layouts are immutable per schedule; `public, max-age=3600`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduleSeatLayout' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # -------------------------------------------------------------- movies ---
+  /v1/movies:
+    get:
+      tags: [Movies]
+      operationId: listMovies
+      summary: List movies
+      description: Ordered by `releaseDate` descending, then `id`.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - name: q
+          in: query
+          description: Title prefix or word match.
+          schema: { type: string, minLength: 2, maxLength: 100 }
+        - name: genre
+          in: query
+          schema: { type: string }
+        - name: language
+          in: query
+          schema: { type: string }
+        - name: nowShowing
+          in: query
+          description: Only movies with at least one published, future show. Combine with `city`.
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/City'
+      responses:
+        '200':
+          description: A page of movies.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MovieList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Movies]
+      operationId: createMovie
+      summary: Create a movie
+      description: Movies are shared across cinemas.
+      x-permissions: ['movie:manage']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateMovie' }
+      responses:
+        '201':
+          description: Movie created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Movie' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/movies/{movieId}:
+    parameters:
+      - $ref: '#/components/parameters/MovieId'
+    get:
+      tags: [Movies]
+      operationId: getMovie
+      summary: Get a movie
+      security: [{}, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: The movie.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Movie' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Movies]
+      operationId: updateMovie
+      summary: Update a movie
+      x-permissions: ['movie:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateMovie' }
+      responses:
+        '200':
+          description: Updated movie.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Movie' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Movies]
+      operationId: deleteMovie
+      summary: Delete a movie
+      description: Fails with `resource-in-use` if any schedule references it.
+      x-permissions: ['movie:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # ----------------------------------------------------- venues & screens ---
+  /v1/venues:
+    get:
+      tags: [Venues and screens]
+      operationId: listVenues
+      summary: List cinemas (venues)
+      description: Ordered by `name`, then `id`.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/City'
+        - $ref: '#/components/parameters/OperatorIdFilter'
+      responses:
+        '200':
+          description: A page of venues.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VenueList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Venues and screens]
+      operationId: createVenue
+      summary: Create a venue
+      x-permissions: ['inventory:create']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateVenue' }
+      responses:
+        '201':
+          description: Venue created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Venue' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/venues/{venueId}:
+    parameters:
+      - $ref: '#/components/parameters/VenueId'
+    get:
+      tags: [Venues and screens]
+      operationId: getVenue
+      summary: Get a venue
+      security: [{}, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: The venue.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Venue' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Venues and screens]
+      operationId: updateVenue
+      summary: Update a venue
+      x-permissions: ['inventory:update']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateVenue' }
+      responses:
+        '200':
+          description: Updated venue.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Venue' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Venues and screens]
+      operationId: deleteVenue
+      summary: Delete a venue
+      description: Fails with `resource-in-use` while it has screens with schedules.
+      x-permissions: ['inventory:delete']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/venues/{venueId}/screens:
+    parameters:
+      - $ref: '#/components/parameters/VenueId'
+    get:
+      tags: [Venues and screens]
+      operationId: listVenueScreens
+      summary: List screens of a venue
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of screens.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreenList' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Venues and screens]
+      operationId: createScreen
+      summary: Add a screen with its seat layout
+      x-permissions: ['inventory:create']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateScreen' }
+      responses:
+        '201':
+          description: Screen created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Screen' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '422':
+          description: Validation error, including `invalid-layout`.
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/ValidationProblem' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/screens/{screenId}:
+    parameters:
+      - $ref: '#/components/parameters/ScreenId'
+    get:
+      tags: [Venues and screens]
+      operationId: getScreen
+      summary: Get a screen
+      security: [{}, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: The screen.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Screen' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Venues and screens]
+      operationId: updateScreen
+      summary: Update a screen
+      description: Changing `seatLayout` is rejected with `schedule-has-bookings` once any published schedule uses the screen.
+      x-permissions: ['inventory:update']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateScreen' }
+      responses:
+        '200':
+          description: Updated screen.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Screen' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Venues and screens]
+      operationId: deleteScreen
+      summary: Delete a screen
+      description: Fails with `resource-in-use` if any schedule references it.
+      x-permissions: ['inventory:delete']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # --------------------------------------------------- stations & routes ---
+  /v1/stations:
+    get:
+      tags: [Stations and routes]
+      operationId: listStations
+      summary: List stations and bus stops
+      description: Ordered by `name`, then `id`.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - name: q
+          in: query
+          description: Match on name, code, or city (prefix).
+          schema: { type: string, minLength: 2, maxLength: 100 }
+        - name: mode
+          in: query
+          schema: { $ref: '#/components/schemas/TransportMode' }
+        - $ref: '#/components/parameters/City'
+      responses:
+        '200':
+          description: A page of stations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StationList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Stations and routes]
+      operationId: createStation
+      summary: Create a station
+      x-permissions: ['station:manage']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateStation' }
+      responses:
+        '201':
+          description: Station created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Station' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '409':
+          description: '`duplicate-resource` (station code taken).'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/stations/{stationId}:
+    parameters:
+      - $ref: '#/components/parameters/StationId'
+    get:
+      tags: [Stations and routes]
+      operationId: getStation
+      summary: Get a station
+      security: [{}, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: The station.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Station' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Stations and routes]
+      operationId: updateStation
+      summary: Update a station
+      x-permissions: ['station:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateStation' }
+      responses:
+        '200':
+          description: Updated station.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Station' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/routes:
+    get:
+      tags: [Stations and routes]
+      operationId: listRoutes
+      summary: List routes
+      description: Ordered by `name`, then `id`.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - name: mode
+          in: query
+          schema: { $ref: '#/components/schemas/TransportMode' }
+        - $ref: '#/components/parameters/OperatorIdFilter'
+        - name: stationId
+          in: query
+          description: Routes that stop at this station.
+          schema: { $ref: './common.yaml#/components/schemas/Id' }
+      responses:
+        '200':
+          description: A page of routes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Stations and routes]
+      operationId: createRoute
+      summary: Create a route with ordered stops
+      x-permissions: ['inventory:create']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRoute' }
+      responses:
+        '201':
+          description: Route created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Route' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404':
+          description: A referenced station does not exist.
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/routes/{routeId}:
+    parameters:
+      - $ref: '#/components/parameters/RouteId'
+    get:
+      tags: [Stations and routes]
+      operationId: getRoute
+      summary: Get a route
+      security: [{}, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: The route.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Route' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Stations and routes]
+      operationId: updateRoute
+      summary: Update a route
+      description: '`stops`, when present, replaces the list. Rejected with `schedule-has-bookings` once a published schedule uses the route.'
+      x-permissions: ['inventory:update']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateRoute' }
+      responses:
+        '200':
+          description: Updated route.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Route' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Stations and routes]
+      operationId: deleteRoute
+      summary: Delete a route
+      description: Fails with `resource-in-use` if a train or schedule references it.
+      x-permissions: ['inventory:delete']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # -------------------------------------------------- buses & trains ------
+  /v1/bus-layouts:
+    get:
+      tags: [Buses and trains]
+      operationId: listBusLayouts
+      summary: List bus seat layouts
+      description: Ordered by `name`, then `id`. Operators see their own; admins see all.
+      x-permissions: ['inventory:read']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/OperatorIdFilter'
+      responses:
+        '200':
+          description: A page of bus layouts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusLayoutList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Buses and trains]
+      operationId: createBusLayout
+      summary: Create a bus layout
+      description: Seater and sleeper seats across lower and upper decks, optionally reserved for women.
+      x-permissions: ['inventory:create']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateBusLayout' }
+      responses:
+        '201':
+          description: Layout created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusLayout' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/bus-layouts/{busLayoutId}:
+    parameters:
+      - $ref: '#/components/parameters/BusLayoutId'
+    get:
+      tags: [Buses and trains]
+      operationId: getBusLayout
+      summary: Get a bus layout
+      x-permissions: ['inventory:read']
+      responses:
+        '200':
+          description: The layout.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusLayout' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Buses and trains]
+      operationId: updateBusLayout
+      summary: Update a bus layout
+      description: '`seatLayout` changes are rejected with `schedule-has-bookings` once a published schedule uses the layout.'
+      x-permissions: ['inventory:update']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateBusLayout' }
+      responses:
+        '200':
+          description: Updated layout.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusLayout' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Buses and trains]
+      operationId: deleteBusLayout
+      summary: Delete a bus layout
+      description: Fails with `resource-in-use` if any schedule references it.
+      x-permissions: ['inventory:delete']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/coach-layouts:
+    get:
+      tags: [Buses and trains]
+      operationId: listCoachLayouts
+      summary: List train coach layouts
+      description: Ordered by `name`, then `id`. Includes platform-wide layouts (`operatorId` null).
+      x-permissions: ['inventory:read']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/ClassCode'
+        - $ref: '#/components/parameters/OperatorIdFilter'
+      responses:
+        '200':
+          description: A page of coach layouts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CoachLayoutList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Buses and trains]
+      operationId: createCoachLayout
+      summary: Create a coach layout (berths)
+      x-permissions: ['inventory:create']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCoachLayout' }
+      responses:
+        '201':
+          description: Layout created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CoachLayout' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/coach-layouts/{coachLayoutId}:
+    parameters:
+      - $ref: '#/components/parameters/CoachLayoutId'
+    get:
+      tags: [Buses and trains]
+      operationId: getCoachLayout
+      summary: Get a coach layout
+      x-permissions: ['inventory:read']
+      responses:
+        '200':
+          description: The layout.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CoachLayout' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Buses and trains]
+      operationId: updateCoachLayout
+      summary: Update a coach layout
+      x-permissions: ['inventory:update']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateCoachLayout' }
+      responses:
+        '200':
+          description: Updated layout.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CoachLayout' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Buses and trains]
+      operationId: deleteCoachLayout
+      summary: Delete a coach layout
+      description: Fails with `resource-in-use` if any train references it.
+      x-permissions: ['inventory:delete']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/trains:
+    get:
+      tags: [Buses and trains]
+      operationId: listTrains
+      summary: List trains
+      description: Ordered by `number`, then `id`.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/OperatorIdFilter'
+        - name: q
+          in: query
+          description: Number or name prefix.
+          schema: { type: string, minLength: 2, maxLength: 50 }
+      responses:
+        '200':
+          description: A page of trains.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrainList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Buses and trains]
+      operationId: createTrain
+      summary: Create a train
+      description: Binds a train number to a `TRAIN` route and a coach composition.
+      x-permissions: ['inventory:create']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTrain' }
+      responses:
+        '201':
+          description: Train created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Train' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '409':
+          description: '`duplicate-resource` (train number taken).'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/trains/{trainId}:
+    parameters:
+      - $ref: '#/components/parameters/TrainId'
+    get:
+      tags: [Buses and trains]
+      operationId: getTrain
+      summary: Get a train
+      security: [{}, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: The train.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Train' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Buses and trains]
+      operationId: updateTrain
+      summary: Update a train
+      description: '`coaches`, when present, replaces the list. Rejected with `schedule-has-bookings` once a published run uses the train.'
+      x-permissions: ['inventory:update']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateTrain' }
+      responses:
+        '200':
+          description: Updated train.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Train' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Buses and trains]
+      operationId: deleteTrain
+      summary: Delete a train
+      description: Fails with `resource-in-use` if any schedule references it.
+      x-permissions: ['inventory:delete']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # ----------------------------------------------------------- operators ---
+  /v1/operators:
+    get:
+      tags: [Operators]
+      operationId: listOperators
+      summary: List operators (tenants)
+      description: Ordered by `name`, then `id`.
+      x-permissions: ['operator:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/OperatorStatus' }
+        - name: vertical
+          in: query
+          schema: { $ref: '#/components/schemas/Vertical' }
+      responses:
+        '200':
+          description: A page of operators.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Operators]
+      operationId: createOperator
+      summary: Onboard an operator
+      description: |
+        Admin-only (no self-signup). Afterwards create operator users in the auth
+        service with `tenantId` set to the returned `id`.
+      x-permissions: ['operator:manage']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOperator' }
+      responses:
+        '201':
+          description: Operator created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operator' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/operators/{operatorId}:
+    parameters:
+      - $ref: '#/components/parameters/OperatorId'
+    get:
+      tags: [Operators]
+      operationId: getOperator
+      summary: Get an operator
+      description: Operators can read their own record.
+      x-permissions: ['operator:manage', 'operator:read:own']
+      responses:
+        '200':
+          description: The operator.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operator' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Operators]
+      operationId: updateOperator
+      summary: Update or suspend an operator
+      description: Suspending an operator hides its published schedules from search and blocks new publishes; existing bookings are unaffected.
+      x-permissions: ['operator:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateOperator' }
+      responses:
+        '200':
+          description: Updated operator.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operator' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # --------------------------------------------------------- policy & fee ---
+  /v1/cancellation-policies:
+    get:
+      tags: [Policy and fees]
+      operationId: listCancellationPolicies
+      summary: List cancellation policy versions
+      description: |
+        Policies are immutable and versioned. Resolution order for a schedule:
+        the operator's active policy for that vertical, otherwise the platform
+        default. Ordered by `createdAt` descending, then `id`.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - name: vertical
+          in: query
+          schema: { $ref: '#/components/schemas/Vertical' }
+        - name: scope
+          in: query
+          schema: { $ref: '#/components/schemas/PolicyScope' }
+        - $ref: '#/components/parameters/OperatorIdFilter'
+        - name: activeOnly
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: A page of policies.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CancellationPolicyList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Policy and fees]
+      operationId: createCancellationPolicy
+      summary: Publish a new policy version
+      description: |
+        Creates a new version for a vertical, either platform-wide
+        (`operatorId` omitted or `null`) or as an operator override, and
+        supersedes the previous active version. Existing bookings keep the policy
+        snapshot taken when they were held.
+      x-permissions: ['policy:manage']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCancellationPolicy' }
+            examples:
+              movies:
+                summary: Platform default for movies
+                value:
+                  vertical: MOVIE
+                  tiers:
+                    - { minHoursBeforeStart: 4, refundBasisPoints: 10000 }
+                    - { minHoursBeforeStart: 1, refundBasisPoints: 5000 }
+                    - { minHoursBeforeStart: 0, refundBasisPoints: 0 }
+      responses:
+        '201':
+          description: Policy version created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CancellationPolicy' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404':
+          description: The referenced operator does not exist.
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '422':
+          description: Validation error, including `invalid-policy-tiers`.
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/ValidationProblem' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/cancellation-policies/{policyId}:
+    get:
+      tags: [Policy and fees]
+      operationId: getCancellationPolicy
+      summary: Get a policy version
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PolicyId'
+      responses:
+        '200':
+          description: The policy version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CancellationPolicy' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/fee-config:
+    get:
+      tags: [Policy and fees]
+      operationId: getFeeConfig
+      summary: Get the convenience fee configuration
+      security: [{}, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current configuration.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeeConfig' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    put:
+      tags: [Policy and fees]
+      operationId: replaceFeeConfig
+      summary: Replace the convenience fee configuration
+      description: |
+        Applies to schedules published afterwards; the fee in force is frozen
+        onto each schedule at publish time. The fee is **not refundable** on a
+        customer cancellation and **fully refunded** on operator cancellation.
+      x-permissions: ['fee:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateFeeConfig' }
+      responses:
+        '200':
+          description: Updated configuration.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeeConfig' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: './common.yaml#/components/securitySchemes/bearerAuth'
+
+  parameters:
+    ScheduleId: { name: scheduleId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+    MovieId: { name: movieId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+    VenueId: { name: venueId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+    ScreenId: { name: screenId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+    StationId: { name: stationId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+    RouteId: { name: routeId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+    BusLayoutId: { name: busLayoutId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+    CoachLayoutId: { name: coachLayoutId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+    TrainId: { name: trainId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+    OperatorId: { name: operatorId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+    PolicyId: { name: policyId, in: path, required: true, schema: { $ref: './common.yaml#/components/schemas/Id' } }
+
+    OperatorIdFilter:
+      name: operatorId
+      in: query
+      description: Filter by operator. Operator users are always limited to their own tenant.
+      schema: { $ref: './common.yaml#/components/schemas/Id' }
+    MovieIdFilter:
+      name: movieId
+      in: query
+      schema: { $ref: './common.yaml#/components/schemas/Id' }
+    City:
+      name: city
+      in: query
+      description: Exact, case-insensitive city name. For bus and train schedules it matches the origin.
+      schema: { type: string, maxLength: 100 }
+    FromStationId:
+      name: fromStationId
+      in: query
+      description: Boarding station. With `toStationId`, matches schedules whose route visits both in that order.
+      schema: { $ref: './common.yaml#/components/schemas/Id' }
+    ToStationId:
+      name: toStationId
+      in: query
+      description: Alighting station.
+      schema: { $ref: './common.yaml#/components/schemas/Id' }
+    Date:
+      name: date
+      in: query
+      description: Local calendar date at the origin (venue or boarding station timezone).
+      schema: { type: string, format: date }
+    ClassCode:
+      name: classCode
+      in: query
+      description: Train class, e.g. `SL`, `3A`, `2A`, `1A`.
+      schema: { $ref: '#/components/schemas/ClassCode' }
+    PriceMinMinor:
+      name: priceMinMinor
+      in: query
+      description: Lowest fare in minor units.
+      schema: { type: integer, minimum: 0 }
+    PriceMaxMinor:
+      name: priceMaxMinor
+      in: query
+      description: Highest fare in minor units.
+      schema: { type: integer, minimum: 0 }
+
+  schemas:
+    # ---------------------------------------------------------- primitives --
+    Vertical:
+      type: string
+      enum: [MOVIE, BUS, TRAIN]
+    TransportMode:
+      type: string
+      enum: [BUS, TRAIN]
+    ClassCode:
+      type: string
+      pattern: '^[A-Z0-9]{1,4}$'
+      examples: [SL, 3A, 2A, 1A]
+    Timezone:
+      type: string
+      description: IANA timezone.
+      examples: [Asia/Kolkata]
+    Address:
+      type: object
+      required: [line1, city, state, postalCode, country]
+      properties:
+        line1: { type: string, maxLength: 200 }
+        line2: { type: string, maxLength: 200 }
+        city: { type: string, maxLength: 100 }
+        state: { type: string, maxLength: 100 }
+        postalCode: { type: string, maxLength: 20 }
+        country: { type: string, pattern: '^[A-Z]{2}$', default: IN, description: ISO 3166-1 alpha-2. }
+    GeoPoint:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+
+    # -------------------------------------------------------------- layout --
+    SeatType:
+      type: string
+      description: |
+        `STANDARD` for cinema seats; `SEATER` / `SLEEPER` for buses; berth types
+        for trains. No price-tier types in the MVP.
+      enum: [STANDARD, SEATER, SLEEPER, BERTH_LOWER, BERTH_MIDDLE, BERTH_UPPER, SIDE_LOWER, SIDE_UPPER]
+    Seat:
+      type: object
+      required: [id, row, column, type]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 8
+          description: Label shown to users, unique within the layout (`A1`, `L12`, `S3`).
+        row: { type: integer, minimum: 0 }
+        column: { type: integer, minimum: 0 }
+        deck:
+          type: string
+          enum: [LOWER, UPPER]
+          default: LOWER
+        type: { $ref: '#/components/schemas/SeatType' }
+        reservedFor:
+          type: [string, 'null']
+          enum: [WOMEN, null]
+          description: '`WOMEN` seats can only be booked for a female passenger (bus only).'
+    SeatLayout:
+      type: object
+      required: [rows, columns, seats]
+      additionalProperties: false
+      properties:
+        rows: { type: integer, minimum: 1, maximum: 100 }
+        columns: { type: integer, minimum: 1, maximum: 100 }
+        seats:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/Seat' }
+      description: Grid geometry. Seat ids must be unique and positions inside the grid, otherwise `invalid-layout`.
+
+    # ------------------------------------------------------------ operators --
+    OperatorStatus:
+      type: string
+      enum: [ACTIVE, SUSPENDED]
+    OperatorSummary:
+      type: object
+      required: [id, name]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        name: { type: string }
+    Operator:
+      type: object
+      required: [id, name, legalName, contactEmail, verticals, status, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        name: { type: string }
+        legalName: { type: string }
+        contactEmail: { $ref: './common.yaml#/components/schemas/Email' }
+        contactPhone: { $ref: './common.yaml#/components/schemas/PhoneE164' }
+        verticals:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items: { $ref: '#/components/schemas/Vertical' }
+        status: { $ref: '#/components/schemas/OperatorStatus' }
+        version: { type: integer, readOnly: true }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    CreateOperator:
+      type: object
+      required: [name, legalName, contactEmail, verticals]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        legalName: { type: string, minLength: 1, maxLength: 200 }
+        contactEmail: { $ref: './common.yaml#/components/schemas/Email' }
+        contactPhone: { $ref: './common.yaml#/components/schemas/PhoneE164' }
+        verticals:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items: { $ref: '#/components/schemas/Vertical' }
+    UpdateOperator:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        legalName: { type: string, minLength: 1, maxLength: 200 }
+        contactEmail: { $ref: './common.yaml#/components/schemas/Email' }
+        contactPhone: { $ref: './common.yaml#/components/schemas/PhoneE164' }
+        verticals:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items: { $ref: '#/components/schemas/Vertical' }
+        status: { $ref: '#/components/schemas/OperatorStatus' }
+
+    # --------------------------------------------------------------- movies --
+    Movie:
+      type: object
+      required: [id, title, durationMinutes, languages, genres, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        title: { type: string }
+        description: { type: string }
+        durationMinutes: { type: integer, minimum: 1, maximum: 600 }
+        languages: { type: array, items: { type: string } }
+        genres: { type: array, items: { type: string } }
+        certificate: { type: string, enum: [U, UA, A, S] }
+        posterUrl: { type: string, format: uri }
+        releaseDate: { type: string, format: date }
+        version: { type: integer, readOnly: true }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    CreateMovie:
+      type: object
+      required: [title, durationMinutes, languages]
+      additionalProperties: false
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 4000 }
+        durationMinutes: { type: integer, minimum: 1, maximum: 600 }
+        languages: { type: array, minItems: 1, items: { type: string } }
+        genres: { type: array, items: { type: string } }
+        certificate: { type: string, enum: [U, UA, A, S] }
+        posterUrl: { type: string, format: uri }
+        releaseDate: { type: string, format: date }
+    UpdateMovie:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 4000 }
+        durationMinutes: { type: integer, minimum: 1, maximum: 600 }
+        languages: { type: array, minItems: 1, items: { type: string } }
+        genres: { type: array, items: { type: string } }
+        certificate: { type: string, enum: [U, UA, A, S] }
+        posterUrl: { type: string, format: uri }
+        releaseDate: { type: string, format: date }
+
+    # ------------------------------------------------------ venues/screens --
+    Venue:
+      type: object
+      required: [id, operatorId, name, address, timezone, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        operatorId: { $ref: './common.yaml#/components/schemas/Id' }
+        name: { type: string }
+        address: { $ref: '#/components/schemas/Address' }
+        location: { $ref: '#/components/schemas/GeoPoint' }
+        timezone: { $ref: '#/components/schemas/Timezone' }
+        version: { type: integer, readOnly: true }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    CreateVenue:
+      type: object
+      required: [name, address, timezone]
+      additionalProperties: false
+      properties:
+        operatorId:
+          $ref: './common.yaml#/components/schemas/Id'
+          description: Required for admins (`operator-required`); ignored or must match the tenant for operators.
+        name: { type: string, minLength: 1, maxLength: 150 }
+        address: { $ref: '#/components/schemas/Address' }
+        location: { $ref: '#/components/schemas/GeoPoint' }
+        timezone: { $ref: '#/components/schemas/Timezone' }
+    UpdateVenue:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 150 }
+        address: { $ref: '#/components/schemas/Address' }
+        location: { $ref: '#/components/schemas/GeoPoint' }
+        timezone: { $ref: '#/components/schemas/Timezone' }
+    Screen:
+      type: object
+      required: [id, venueId, name, seatLayout, seatCount, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        venueId: { $ref: './common.yaml#/components/schemas/Id' }
+        name: { type: string }
+        seatLayout: { $ref: '#/components/schemas/SeatLayout' }
+        seatCount: { type: integer, readOnly: true }
+        version: { type: integer, readOnly: true }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    CreateScreen:
+      type: object
+      required: [name, seatLayout]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        seatLayout: { $ref: '#/components/schemas/SeatLayout' }
+    UpdateScreen:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        seatLayout: { $ref: '#/components/schemas/SeatLayout' }
+
+    # ------------------------------------------------- stations & routes ----
+    Station:
+      type: object
+      required: [id, code, name, city, state, timezone, modes, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        code: { type: string, pattern: '^[A-Z0-9]{2,8}$' }
+        name: { type: string }
+        city: { type: string }
+        state: { type: string }
+        timezone: { $ref: '#/components/schemas/Timezone' }
+        location: { $ref: '#/components/schemas/GeoPoint' }
+        modes:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items: { $ref: '#/components/schemas/TransportMode' }
+        version: { type: integer, readOnly: true }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    CreateStation:
+      type: object
+      required: [code, name, city, state, timezone, modes]
+      additionalProperties: false
+      properties:
+        code: { type: string, pattern: '^[A-Z0-9]{2,8}$' }
+        name: { type: string, minLength: 1, maxLength: 150 }
+        city: { type: string, minLength: 1, maxLength: 100 }
+        state: { type: string, minLength: 1, maxLength: 100 }
+        timezone: { $ref: '#/components/schemas/Timezone' }
+        location: { $ref: '#/components/schemas/GeoPoint' }
+        modes:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items: { $ref: '#/components/schemas/TransportMode' }
+    UpdateStation:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 150 }
+        city: { type: string, minLength: 1, maxLength: 100 }
+        state: { type: string, minLength: 1, maxLength: 100 }
+        timezone: { $ref: '#/components/schemas/Timezone' }
+        location: { $ref: '#/components/schemas/GeoPoint' }
+        modes:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items: { $ref: '#/components/schemas/TransportMode' }
+    StopPoint:
+      type: object
+      description: A boarding or dropping point within a bus stop (chosen by the passenger at booking).
+      required: [name, offsetMinutes]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id', readOnly: true }
+        name: { type: string, maxLength: 150 }
+        address: { type: string, maxLength: 300 }
+        offsetMinutes:
+          type: integer
+          description: Minutes after the stop's scheduled time at which the bus reaches this point (may be negative).
+    RouteStop:
+      type: object
+      required: [stationId, sequence, distanceKm]
+      properties:
+        stationId: { $ref: './common.yaml#/components/schemas/Id' }
+        sequence: { type: integer, minimum: 0, description: 'Strictly increasing from 0.' }
+        arrivalOffsetMinutes:
+          type: [integer, 'null']
+          minimum: 0
+          description: Minutes from origin departure. `null` at the origin.
+        departureOffsetMinutes:
+          type: [integer, 'null']
+          minimum: 0
+          description: Minutes from origin departure. `null` at the final stop.
+        distanceKm: { type: number, minimum: 0, description: Cumulative distance from the origin. }
+        boardingPoints:
+          type: array
+          items: { $ref: '#/components/schemas/StopPoint' }
+          description: Bus routes only.
+        droppingPoints:
+          type: array
+          items: { $ref: '#/components/schemas/StopPoint' }
+          description: Bus routes only.
+    Route:
+      type: object
+      required: [id, operatorId, mode, name, stops, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        operatorId: { $ref: './common.yaml#/components/schemas/Id' }
+        mode: { $ref: '#/components/schemas/TransportMode' }
+        name: { type: string }
+        stops:
+          type: array
+          minItems: 2
+          items: { $ref: '#/components/schemas/RouteStop' }
+        version: { type: integer, readOnly: true }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    CreateRoute:
+      type: object
+      required: [mode, name, stops]
+      additionalProperties: false
+      properties:
+        operatorId:
+          $ref: './common.yaml#/components/schemas/Id'
+          description: Required for admins (`operator-required`).
+        mode: { $ref: '#/components/schemas/TransportMode' }
+        name: { type: string, minLength: 1, maxLength: 150 }
+        stops:
+          type: array
+          minItems: 2
+          items: { $ref: '#/components/schemas/RouteStop' }
+    UpdateRoute:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 150 }
+        stops:
+          type: array
+          minItems: 2
+          items: { $ref: '#/components/schemas/RouteStop' }
+
+    # ------------------------------------------------------ buses & trains --
+    BusLayout:
+      type: object
+      required: [id, operatorId, name, seatLayout, seatCount, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        operatorId: { $ref: './common.yaml#/components/schemas/Id' }
+        name: { type: string }
+        amenities: { type: array, items: { type: string }, examples: [[AC, 'Charging point']] }
+        seatLayout: { $ref: '#/components/schemas/SeatLayout' }
+        seatCount: { type: integer, readOnly: true }
+        version: { type: integer, readOnly: true }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    CreateBusLayout:
+      type: object
+      required: [name, seatLayout]
+      additionalProperties: false
+      properties:
+        operatorId:
+          $ref: './common.yaml#/components/schemas/Id'
+          description: Required for admins (`operator-required`).
+        name: { type: string, minLength: 1, maxLength: 120 }
+        amenities: { type: array, items: { type: string } }
+        seatLayout: { $ref: '#/components/schemas/SeatLayout' }
+    UpdateBusLayout:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        amenities: { type: array, items: { type: string } }
+        seatLayout: { $ref: '#/components/schemas/SeatLayout' }
+    CoachLayout:
+      type: object
+      required: [id, name, classCode, seatLayout, seatCount, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        operatorId:
+          oneOf:
+            - $ref: './common.yaml#/components/schemas/Id'
+            - type: 'null'
+          description: '`null` for platform-wide layouts available to every operator.'
+        name: { type: string }
+        classCode: { $ref: '#/components/schemas/ClassCode' }
+        seatLayout: { $ref: '#/components/schemas/SeatLayout' }
+        seatCount: { type: integer, readOnly: true }
+        version: { type: integer, readOnly: true }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    CreateCoachLayout:
+      type: object
+      required: [name, classCode, seatLayout]
+      additionalProperties: false
+      properties:
+        operatorId:
+          oneOf:
+            - $ref: './common.yaml#/components/schemas/Id'
+            - type: 'null'
+          description: Admins may pass `null` to create a platform-wide layout.
+        name: { type: string, minLength: 1, maxLength: 120 }
+        classCode: { $ref: '#/components/schemas/ClassCode' }
+        seatLayout: { $ref: '#/components/schemas/SeatLayout' }
+    UpdateCoachLayout:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        classCode: { $ref: '#/components/schemas/ClassCode' }
+        seatLayout: { $ref: '#/components/schemas/SeatLayout' }
+    Coach:
+      type: object
+      required: [coachNumber, classCode, coachLayoutId]
+      properties:
+        coachNumber: { type: string, maxLength: 4, examples: [S1, B2, A1] }
+        classCode: { $ref: '#/components/schemas/ClassCode' }
+        coachLayoutId: { $ref: './common.yaml#/components/schemas/Id' }
+    Train:
+      type: object
+      required: [id, operatorId, number, name, routeId, coaches, status, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        operatorId: { $ref: './common.yaml#/components/schemas/Id' }
+        number: { type: string, pattern: '^[0-9A-Z]{3,8}$' }
+        name: { type: string }
+        routeId: { $ref: './common.yaml#/components/schemas/Id' }
+        coaches:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Coach' }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        version: { type: integer, readOnly: true }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    CreateTrain:
+      type: object
+      required: [number, name, routeId, coaches]
+      additionalProperties: false
+      properties:
+        operatorId:
+          $ref: './common.yaml#/components/schemas/Id'
+          description: Required for admins (`operator-required`).
+        number: { type: string, pattern: '^[0-9A-Z]{3,8}$' }
+        name: { type: string, minLength: 1, maxLength: 150 }
+        routeId:
+          $ref: './common.yaml#/components/schemas/Id'
+          description: 'Must reference a route with `mode: TRAIN`.'
+        coaches:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Coach' }
+    UpdateTrain:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 150 }
+        routeId: { $ref: './common.yaml#/components/schemas/Id' }
+        coaches:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Coach' }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+
+    # ------------------------------------------------------------ schedules --
+    ScheduleStatus:
+      type: string
+      enum: [DRAFT, PUBLISHED, CANCELLED, COMPLETED]
+    Availability:
+      type: object
+      description: |
+        Best-effort seat counts from the booking service, cached for 5-10 seconds.
+        `null` on the parent when the booking service is unreachable; never block
+        the page on it.
+      required: [seatsTotal, seatsAvailable, asOf]
+      properties:
+        seatsTotal: { type: integer, minimum: 0 }
+        seatsAvailable: { type: integer, minimum: 0 }
+        asOf: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    ScheduleCommon:
+      type: object
+      required: [id, vertical, operator, status, startsAt, timezone, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        vertical: { $ref: '#/components/schemas/Vertical' }
+        operator: { $ref: '#/components/schemas/OperatorSummary' }
+        status: { $ref: '#/components/schemas/ScheduleStatus' }
+        startsAt:
+          $ref: './common.yaml#/components/schemas/Timestamp'
+          description: Show start, bus departure from origin, or train departure from origin.
+        endsAt:
+          oneOf:
+            - $ref: './common.yaml#/components/schemas/Timestamp'
+            - type: 'null'
+          readOnly: true
+          description: Derived from the movie duration or the route's last stop.
+        timezone:
+          $ref: '#/components/schemas/Timezone'
+          description: Zone to display times in (venue or origin station).
+        cancellationPolicy:
+          $ref: '#/components/schemas/CancellationPolicy'
+          readOnly: true
+          description: Policy frozen at publish time. Absent on drafts.
+        convenienceFeeBasisPoints:
+          type: integer
+          readOnly: true
+          description: Fee frozen at publish time. Absent on drafts.
+        availability:
+          oneOf:
+            - $ref: '#/components/schemas/Availability'
+            - type: 'null'
+          readOnly: true
+        publishedAt: { $ref: './common.yaml#/components/schemas/Timestamp', readOnly: true }
+        cancelledAt: { $ref: './common.yaml#/components/schemas/Timestamp', readOnly: true }
+        cancellationReason: { type: string, readOnly: true }
+        version: { type: integer, readOnly: true }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    MovieShow:
+      allOf:
+        - $ref: '#/components/schemas/ScheduleCommon'
+        - type: object
+          required: [movie, screenId, venueId, language, format, price]
+          properties:
+            vertical: { const: MOVIE }
+            movie:
+              type: object
+              required: [id, title]
+              properties:
+                id: { $ref: './common.yaml#/components/schemas/Id' }
+                title: { type: string }
+                posterUrl: { type: string, format: uri }
+            venueId: { $ref: './common.yaml#/components/schemas/Id' }
+            screenId: { $ref: './common.yaml#/components/schemas/Id' }
+            language: { type: string }
+            format: { $ref: '#/components/schemas/ShowFormat' }
+            price:
+              $ref: './common.yaml#/components/schemas/Money'
+              description: One price for every seat in the MVP.
+    BusTrip:
+      allOf:
+        - $ref: '#/components/schemas/ScheduleCommon'
+        - type: object
+          required: [routeId, busLayoutId, fares]
+          properties:
+            vertical: { const: BUS }
+            routeId: { $ref: './common.yaml#/components/schemas/Id' }
+            busLayoutId: { $ref: './common.yaml#/components/schemas/Id' }
+            registration: { type: string, maxLength: 20, description: Vehicle registration number. }
+            fares:
+              type: array
+              minItems: 1
+              items: { $ref: '#/components/schemas/BusFare' }
+    TrainRun:
+      allOf:
+        - $ref: '#/components/schemas/ScheduleCommon'
+        - type: object
+          required: [trainId, routeId, fareTable]
+          properties:
+            vertical: { const: TRAIN }
+            trainId: { $ref: './common.yaml#/components/schemas/Id' }
+            routeId: { $ref: './common.yaml#/components/schemas/Id' }
+            fareTable:
+              type: array
+              minItems: 1
+              items: { $ref: '#/components/schemas/TrainFare' }
+    Schedule:
+      oneOf:
+        - $ref: '#/components/schemas/MovieShow'
+        - $ref: '#/components/schemas/BusTrip'
+        - $ref: '#/components/schemas/TrainRun'
+      discriminator:
+        propertyName: vertical
+        mapping:
+          MOVIE: '#/components/schemas/MovieShow'
+          BUS: '#/components/schemas/BusTrip'
+          TRAIN: '#/components/schemas/TrainRun'
+    ShowFormat:
+      type: string
+      enum: [TWO_D, THREE_D, IMAX]
+    BusFare:
+      type: object
+      required: [seatType, price]
+      properties:
+        seatType: { $ref: '#/components/schemas/SeatType' }
+        price: { $ref: './common.yaml#/components/schemas/Money' }
+    TrainFare:
+      type: object
+      description: Fare for one class between two stations of the route (`from` must precede `to`).
+      required: [classCode, fromStationId, toStationId, price]
+      properties:
+        classCode: { $ref: '#/components/schemas/ClassCode' }
+        fromStationId: { $ref: './common.yaml#/components/schemas/Id' }
+        toStationId: { $ref: './common.yaml#/components/schemas/Id' }
+        price: { $ref: './common.yaml#/components/schemas/Money' }
+
+    CreateMovieShow:
+      type: object
+      required: [vertical, movieId, screenId, startsAt, language, format, price]
+      additionalProperties: false
+      properties:
+        vertical: { const: MOVIE }
+        movieId: { $ref: './common.yaml#/components/schemas/Id' }
+        screenId: { $ref: './common.yaml#/components/schemas/Id' }
+        startsAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        language: { type: string }
+        format: { $ref: '#/components/schemas/ShowFormat' }
+        price: { $ref: './common.yaml#/components/schemas/Money' }
+    CreateBusTrip:
+      type: object
+      required: [vertical, routeId, busLayoutId, startsAt, fares]
+      additionalProperties: false
+      properties:
+        vertical: { const: BUS }
+        routeId: { $ref: './common.yaml#/components/schemas/Id' }
+        busLayoutId: { $ref: './common.yaml#/components/schemas/Id' }
+        registration: { type: string, maxLength: 20 }
+        startsAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        fares:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/BusFare' }
+    CreateTrainRun:
+      type: object
+      required: [vertical, trainId, startsAt, fareTable]
+      additionalProperties: false
+      properties:
+        vertical: { const: TRAIN }
+        trainId: { $ref: './common.yaml#/components/schemas/Id' }
+        startsAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        fareTable:
+          type: array
+          minItems: 1
+          description: Must cover every class on the train and every ordered station pair of its route, otherwise `incomplete-fare-table`.
+          items: { $ref: '#/components/schemas/TrainFare' }
+    CreateSchedule:
+      oneOf:
+        - $ref: '#/components/schemas/CreateMovieShow'
+        - $ref: '#/components/schemas/CreateBusTrip'
+        - $ref: '#/components/schemas/CreateTrainRun'
+      discriminator:
+        propertyName: vertical
+        mapping:
+          MOVIE: '#/components/schemas/CreateMovieShow'
+          BUS: '#/components/schemas/CreateBusTrip'
+          TRAIN: '#/components/schemas/CreateTrainRun'
+    UpdateSchedule:
+      type: object
+      description: Fields not valid for the schedule's vertical answer `422`.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        startsAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        language: { type: string }
+        format: { $ref: '#/components/schemas/ShowFormat' }
+        price: { $ref: './common.yaml#/components/schemas/Money' }
+        registration: { type: string, maxLength: 20 }
+        fares:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/BusFare' }
+        fareTable:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/TrainFare' }
+    CancelScheduleRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: Included in the notification sent to every affected customer.
+    ScheduleSeatLayout:
+      type: object
+      required: [scheduleId, vertical, layouts]
+      properties:
+        scheduleId: { $ref: './common.yaml#/components/schemas/Id' }
+        vertical: { $ref: '#/components/schemas/Vertical' }
+        layouts:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [seatLayout]
+            properties:
+              coachNumber:
+                type: [string, 'null']
+                description: Set for train runs; `null` otherwise.
+              classCode:
+                oneOf:
+                  - $ref: '#/components/schemas/ClassCode'
+                  - type: 'null'
+              seatLayout: { $ref: '#/components/schemas/SeatLayout' }
+
+    # --------------------------------------------------- policy & fee -------
+    PolicyScope:
+      type: string
+      enum: [PLATFORM, OPERATOR]
+    PolicyTier:
+      type: object
+      description: |
+        The first tier (in descending `minHoursBeforeStart`) whose threshold is
+        less than or equal to the hours remaining applies.
+      required: [minHoursBeforeStart, refundBasisPoints]
+      properties:
+        minHoursBeforeStart: { type: integer, minimum: 0 }
+        refundBasisPoints:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: Share of the ticket subtotal refunded (10000 = 100%). The convenience fee is not refundable on customer cancellations.
+        flatFeeMinor:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Flat per-passenger deduction (used for trains).
+    CancellationPolicy:
+      type: object
+      required: [id, scope, vertical, version, tiers, effectiveFrom, status, createdAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        scope: { $ref: '#/components/schemas/PolicyScope' }
+        operatorId:
+          oneOf:
+            - $ref: './common.yaml#/components/schemas/Id'
+            - type: 'null'
+          description: '`null` for the platform default.'
+        vertical: { $ref: '#/components/schemas/Vertical' }
+        version: { type: integer, minimum: 1 }
+        tiers:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/PolicyTier' }
+        effectiveFrom: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        status: { type: string, enum: [ACTIVE, SUPERSEDED] }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        createdBy: { $ref: './common.yaml#/components/schemas/Id' }
+    CreateCancellationPolicy:
+      type: object
+      required: [vertical, tiers]
+      additionalProperties: false
+      properties:
+        operatorId:
+          oneOf:
+            - $ref: './common.yaml#/components/schemas/Id'
+            - type: 'null'
+          description: Omit or `null` for the platform default.
+        vertical: { $ref: '#/components/schemas/Vertical' }
+        tiers:
+          type: array
+          minItems: 1
+          description: Strictly descending `minHoursBeforeStart`; the last must be `0`, otherwise `invalid-policy-tiers`.
+          items: { $ref: '#/components/schemas/PolicyTier' }
+        effectiveFrom:
+          $ref: './common.yaml#/components/schemas/Timestamp'
+          description: Defaults to now. Must not be in the past by more than a minute.
+    FeeConfig:
+      type: object
+      required: [convenienceFeeBasisPoints, version, updatedAt]
+      properties:
+        convenienceFeeBasisPoints:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: Percentage of the ticket subtotal in basis points (300 = 3%).
+        version: { type: integer, readOnly: true }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+    UpdateFeeConfig:
+      type: object
+      required: [convenienceFeeBasisPoints]
+      additionalProperties: false
+      properties:
+        convenienceFeeBasisPoints: { type: integer, minimum: 0, maximum: 2000 }
+
+    # --------------------------------------------------------------- search --
+    MovieHit:
+      type: object
+      required: [kind, movie]
+      properties:
+        kind: { const: MOVIE }
+        movie: { $ref: '#/components/schemas/Movie' }
+    ScheduleHit:
+      type: object
+      required: [kind, schedule]
+      properties:
+        kind: { const: SCHEDULE }
+        schedule: { $ref: '#/components/schemas/Schedule' }
+    SearchHit:
+      oneOf:
+        - $ref: '#/components/schemas/MovieHit'
+        - $ref: '#/components/schemas/ScheduleHit'
+      discriminator:
+        propertyName: kind
+        mapping:
+          MOVIE: '#/components/schemas/MovieHit'
+          SCHEDULE: '#/components/schemas/ScheduleHit'
+
+    # ---------------------------------------------------------------- lists --
+    SearchResultList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/SearchHit' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    ScheduleList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Schedule' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    MovieList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Movie' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    VenueList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Venue' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    ScreenList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Screen' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    StationList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Station' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    RouteList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Route' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    BusLayoutList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/BusLayout' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    CoachLayoutList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/CoachLayout' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    TrainList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Train' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    OperatorList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Operator' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+    CancellationPolicyList:
+      type: object
+      required: [data, page]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/CancellationPolicy' } }
+        page: { $ref: './common.yaml#/components/schemas/Page' }

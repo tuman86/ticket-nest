@@ -1,0 +1,1121 @@
+openapi: 3.1.0
+info:
+  title: TicketNest Auth Service API
+  version: 1.0.0
+  summary: Authentication, guest access, users, and permission-based roles.
+  description: |
+    Public API of the **auth service**. It owns users, roles, permissions,
+    tokens, guest sessions and OTP. Operators (tenants) are owned by the catalog
+    service; this service only stores a `tenantId` reference on operator users.
+
+    ## Conventions
+    Shared conventions (errors, pagination, headers, tracing) are defined in
+    [`common.yaml`](./common.yaml). In short: `/v1` versioning, camelCase JSON,
+    RFC 9457 `application/problem+json` errors, cursor pagination
+    (`limit` + `cursor` returning `{ data, page }`), `PATCH` as JSON Merge Patch,
+    and optional `If-Match` / `ETag` concurrency control.
+
+    ## Tokens
+    * **Access token** - JWT, 10 minutes, EdDSA/RS256. Public keys at
+      `/.well-known/jwks.json`. Claims: `sub`, `role`, `permissions[]`, `tenantId`.
+    * **Refresh token** - opaque, rotated on every use. Re-use of an already
+      rotated token revokes the whole token family (`refresh-token-reuse`).
+    * **Guest session token** - JWT with `sid` and no `sub`; binds seat holds to
+      an anonymous browser session.
+    * **Email proof token** - short-lived JWT proving control of an email address
+      (`email`, `scope: booking:lookup`). The **booking service** checks that the
+      booking reference and contact email match; this service never sees bookings.
+
+    ## Permissions
+    Permissions are strings shaped `resource:action[:scope]`, for example
+    `inventory:create`, `booking:read:any`, `refund:issue`, `refund:approve`,
+    `policy:manage`, `user:manage`, `role:manage`. Roles are named bundles of
+    permissions and an admin can edit them. Each operation lists what it needs in
+    `x-permissions`; `self` means any authenticated user acting on their own record.
+
+    ## Domain problem types
+    | type (suffix)             | status | meaning |
+    |---------------------------|--------|---------|
+    | `invalid-credentials`     | 401 | wrong email or password |
+    | `invalid-refresh-token`   | 401 | refresh token unknown, expired, or revoked |
+    | `refresh-token-reuse`     | 401 | rotated token replayed; the session family was revoked |
+    | `account-disabled`        | 403 | user status is `DISABLED` |
+    | `email-already-registered`| 409 | an account with this email exists |
+    | `invalid-otp`             | 422 | code wrong or expired |
+    | `otp-attempts-exceeded`   | 429 | too many wrong codes; request a new code |
+    | `invalid-token`           | 422 | verification or reset token invalid or expired |
+    | `system-role-immutable`   | 409 | built-in role cannot be deleted or renamed |
+    | `role-in-use`             | 409 | role still assigned to users |
+    | `unknown-permission`      | 422 | permission key not in the catalogue |
+    | `tenant-required`         | 422 | operator users must have a `tenantId` |
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+
+servers:
+  - url: https://api.ticketnest.example
+    description: Production (via api-gateway)
+  - url: https://api.staging.ticketnest.example
+    description: Staging
+  - url: http://localhost:4000
+    description: Local (docker compose, via api-gateway)
+
+tags:
+  - name: Authentication
+    description: Registration, login, token refresh, logout.
+  - name: Account recovery
+    description: Email verification and password reset.
+  - name: Guest access
+    description: Anonymous sessions and email-OTP proof for guest booking lookup.
+  - name: Users
+    description: Own profile and administrative user management.
+  - name: Roles and permissions
+    description: Permission-based RBAC administration.
+  - name: Keys
+    description: Public signing keys for token verification.
+  - name: Operations
+    description: Liveness and readiness probes.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /.well-known/jwks.json:
+    get:
+      tags: [Keys]
+      operationId: getJwks
+      summary: JSON Web Key Set
+      description: |
+        Public keys used to verify access tokens. Unversioned by convention
+        (RFC 8615). Cache with the returned `Cache-Control`; keys rotate with an
+        overlap so verifiers should refresh on an unknown `kid`.
+      security: []
+      responses:
+        '200':
+          description: Current signing keys.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: Typically `public, max-age=300`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Jwks' }
+
+  /healthz:
+    get:
+      tags: [Operations]
+      operationId: getLiveness
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /readyz:
+    get:
+      tags: [Operations]
+      operationId: getReadiness
+      summary: Readiness probe
+      description: Checks the database and Redis. Used by Kubernetes.
+      security: []
+      responses:
+        '200':
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+        '503':
+          $ref: './common.yaml#/components/responses/ServiceUnavailable'
+
+  # ---------------------------------------------------------------- auth ---
+  /v1/auth/register:
+    post:
+      tags: [Authentication]
+      operationId: registerUser
+      summary: Register a customer account
+      description: |
+        Creates a `CUSTOMER` account and sends an email-verification link.
+        Staff accounts are created by an admin through `POST /v1/users`.
+        Past guest bookings with the same email attach only after the email is
+        verified.
+      security: []
+      parameters:
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Account created. No tokens are issued until login.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+            X-Request-Id: { $ref: './common.yaml#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '409':
+          description: Email already registered (`email-already-registered`).
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: Log in with email and password
+      security: []
+      parameters:
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated.
+          headers:
+            X-Request-Id: { $ref: './common.yaml#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401':
+          description: Wrong email or password (`invalid-credentials`). The response is identical for unknown emails.
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '403':
+          description: Account disabled (`account-disabled`).
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      operationId: refreshTokens
+      summary: Exchange a refresh token for a new token pair
+      description: |
+        Rotates the refresh token. The submitted token becomes invalid. Replaying
+        an already rotated token revokes the entire token family and returns
+        `refresh-token-reuse`.
+      security: []
+      parameters:
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: New token pair.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401':
+          description: '`invalid-refresh-token` or `refresh-token-reuse`.'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: Revoke a refresh token
+      description: Idempotent. Always `204`, even if the token was already revoked or unknown.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '204': { description: Token revoked. }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # ------------------------------------------------------ account recovery --
+  /v1/auth/email-verification/confirm:
+    post:
+      tags: [Account recovery]
+      operationId: confirmEmailVerification
+      summary: Confirm an email address using the emailed token
+      description: |
+        On success the user's `emailVerified` becomes true and the service emits
+        `user.email_verified`, which lets the booking service attach earlier guest
+        bookings made with this email.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenRequest' }
+      responses:
+        '204': { description: Email verified. }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '422':
+          description: '`invalid-token` (unknown, expired, or already used) or a field validation error.'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/ValidationProblem' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/auth/password-reset:
+    post:
+      tags: [Account recovery]
+      operationId: requestPasswordReset
+      summary: Request a password-reset email
+      description: Always `202`, whether or not the email is registered, to prevent account enumeration.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailRequest' }
+      responses:
+        '202': { description: 'If the account exists, an email was sent.' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/auth/password-reset/confirm:
+    post:
+      tags: [Account recovery]
+      operationId: confirmPasswordReset
+      summary: Set a new password using the emailed token
+      description: Revokes all refresh tokens of the user.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordResetConfirmRequest' }
+      responses:
+        '204': { description: Password changed. }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '422':
+          description: '`invalid-token` or a field validation error.'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/ValidationProblem' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # --------------------------------------------------------- guest access ---
+  /v1/auth/guest-sessions:
+    post:
+      tags: [Guest access]
+      operationId: createGuestSession
+      summary: Start an anonymous guest session
+      description: |
+        Issues a token with a fresh `sid`. Seat holds and guest checkout are bound
+        to this `sid`, so the client must keep the token for the whole checkout.
+      security: []
+      parameters:
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      responses:
+        '201':
+          description: Guest session created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GuestSession' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/auth/email-otp:
+    post:
+      tags: [Guest access]
+      operationId: requestEmailOtp
+      summary: Email a one-time code
+      description: |
+        Sends a 6-digit code (10 minute validity) to the address. Used for guest
+        booking lookup. Always `202` regardless of whether any booking exists for
+        the address. Strictly throttled per email and per IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailOtpRequest' }
+      responses:
+        '202': { description: Code sent. }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/auth/email-otp/verify:
+    post:
+      tags: [Guest access]
+      operationId: verifyEmailOtp
+      summary: Exchange the code for an email proof token
+      description: |
+        The returned token proves control of the email for 15 minutes. The booking
+        service accepts it, together with a booking reference, to show or cancel
+        a guest booking when the reference and contact email match.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailOtpVerifyRequest' }
+      responses:
+        '200':
+          description: Email verified.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmailProofToken' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '422':
+          description: '`invalid-otp` or a field validation error.'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/ValidationProblem' }
+        '429':
+          description: '`otp-attempts-exceeded` or a general rate limit.'
+          headers:
+            Retry-After: { $ref: './common.yaml#/components/headers/RetryAfter' }
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # --------------------------------------------------------------- users ---
+  /v1/users/me:
+    get:
+      tags: [Users]
+      operationId: getCurrentUser
+      summary: Get own profile
+      x-permissions: [self]
+      responses:
+        '200':
+          description: The authenticated user.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Users]
+      operationId: updateCurrentUser
+      summary: Update own profile
+      description: JSON Merge Patch. Changing `email` marks it unverified and sends a new verification email.
+      x-permissions: [self]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateProfileRequest' }
+      responses:
+        '200':
+          description: Updated profile.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '409':
+          description: New email already registered (`email-already-registered`).
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/users/me/password:
+    post:
+      tags: [Users]
+      operationId: changeOwnPassword
+      summary: Change own password
+      description: Revokes all other refresh tokens of the user.
+      x-permissions: [self]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        '204': { description: Password changed. }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/users/me/email-verification:
+    post:
+      tags: [Users]
+      operationId: resendEmailVerification
+      summary: Resend the email-verification link
+      x-permissions: [self]
+      responses:
+        '202': { description: Verification email queued (no-op if already verified). }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: List users
+      description: Ordered by `createdAt` descending, then `id`. Operators with `user:read:tenant` see only users of their own tenant.
+      x-permissions: ['user:read:any', 'user:read:tenant']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - name: role
+          in: query
+          description: Filter by role key.
+          schema: { type: string, examples: [OPERATOR] }
+        - name: tenantId
+          in: query
+          description: Filter by operator tenant.
+          schema: { $ref: './common.yaml#/components/schemas/Id' }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/UserStatus' }
+        - name: email
+          in: query
+          description: Case-insensitive prefix match.
+          schema: { type: string, minLength: 2, maxLength: 254 }
+      responses:
+        '200':
+          description: A page of users.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserList' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: Create a staff user
+      description: |
+        Creates an operator, support agent, or admin. A temporary password is not
+        returned; the user receives an email to set one. Operator users require a
+        `tenantId` (an operator id from the catalog service).
+      x-permissions: ['user:manage']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUserRequest' }
+      responses:
+        '201':
+          description: User created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '409':
+          description: Email already registered (`email-already-registered`).
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '422':
+          description: Validation error, including `tenant-required` and unknown role.
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/ValidationProblem' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/users/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Users]
+      operationId: getUser
+      summary: Get a user
+      x-permissions: ['user:read:any', 'user:read:tenant']
+      responses:
+        '200':
+          description: The user.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Users]
+      operationId: updateUser
+      summary: Change a user's role, tenant, or status
+      description: |
+        Disabling a user revokes their refresh tokens; access tokens remain valid
+        until they expire (at most 10 minutes). Role changes take effect on the
+        user's next token.
+      x-permissions: ['user:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/AdminUpdateUserRequest' }
+      responses:
+        '200':
+          description: Updated user.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422': { $ref: './common.yaml#/components/responses/ValidationError' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  # ------------------------------------------------- roles & permissions ---
+  /v1/permissions:
+    get:
+      tags: [Roles and permissions]
+      operationId: listPermissions
+      summary: List the permission catalogue
+      description: Static list of every permission key the platform understands.
+      x-permissions: ['role:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of permissions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PermissionList' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/roles:
+    get:
+      tags: [Roles and permissions]
+      operationId: listRoles
+      summary: List roles
+      x-permissions: ['role:manage', 'user:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - $ref: './common.yaml#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of roles.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleList' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Roles and permissions]
+      operationId: createRole
+      summary: Create a custom role
+      x-permissions: ['role:manage']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRoleRequest' }
+      responses:
+        '201':
+          description: Role created.
+          headers:
+            Location: { $ref: './common.yaml#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Role' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '409': { $ref: './common.yaml#/components/responses/Conflict' }
+        '422':
+          description: Validation error, including `unknown-permission`.
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/ValidationProblem' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+  /v1/roles/{roleId}:
+    parameters:
+      - $ref: '#/components/parameters/RoleId'
+    get:
+      tags: [Roles and permissions]
+      operationId: getRole
+      summary: Get a role
+      x-permissions: ['role:manage', 'user:manage']
+      responses:
+        '200':
+          description: The role.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Role' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    patch:
+      tags: [Roles and permissions]
+      operationId: updateRole
+      summary: Edit a role's name, description, or permissions
+      description: |
+        `permissions`, when present, replaces the whole set (merge-patch arrays
+        are replaced, not merged). Built-in roles may change permissions but not
+        `key`. Users pick up changes on their next token (at most 10 minutes).
+      x-permissions: ['role:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/UpdateRoleRequest' }
+      responses:
+        '200':
+          description: Updated role.
+          headers:
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Role' }
+        '400': { $ref: './common.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409':
+          description: '`system-role-immutable` (tried to change the key of a built-in role).'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '422':
+          description: Validation error, including `unknown-permission`.
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/ValidationProblem' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Roles and permissions]
+      operationId: deleteRole
+      summary: Delete a custom role
+      x-permissions: ['role:manage']
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Role deleted. }
+        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './common.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './common.yaml#/components/responses/NotFound' }
+        '409':
+          description: '`system-role-immutable` or `role-in-use`.'
+          content:
+            application/problem+json:
+              schema: { $ref: './common.yaml#/components/schemas/Problem' }
+        '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
+        '500': { $ref: './common.yaml#/components/responses/InternalError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: './common.yaml#/components/securitySchemes/bearerAuth'
+
+  parameters:
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { $ref: './common.yaml#/components/schemas/Id' }
+    RoleId:
+      name: roleId
+      in: path
+      required: true
+      schema: { $ref: './common.yaml#/components/schemas/Id' }
+
+  schemas:
+    # ------------------------------------------------------------ tokens ---
+    TokenPair:
+      type: object
+      required: [accessToken, refreshToken, tokenType, expiresIn, refreshExpiresIn]
+      properties:
+        accessToken:
+          type: string
+          description: 'JWT. Send as `Authorization: Bearer <token>`.'
+        refreshToken:
+          type: string
+          description: Opaque, single use. Store in an httpOnly cookie in the web apps.
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresIn:
+          type: integer
+          description: Access token lifetime in seconds.
+          examples: [600]
+        refreshExpiresIn:
+          type: integer
+          description: Refresh token lifetime in seconds.
+          examples: [2592000]
+
+    GuestSession:
+      type: object
+      required: [accessToken, tokenType, expiresIn, sessionId]
+      properties:
+        accessToken: { type: string }
+        tokenType: { type: string, enum: [Bearer] }
+        expiresIn:
+          type: integer
+          description: Lifetime in seconds (default 2 hours).
+        sessionId:
+          type: string
+          description: The `sid` claim bound into the token.
+
+    EmailProofToken:
+      type: object
+      required: [accessToken, tokenType, expiresIn, email, scope]
+      properties:
+        accessToken: { type: string }
+        tokenType: { type: string, enum: [Bearer] }
+        expiresIn:
+          type: integer
+          description: Lifetime in seconds (default 900).
+        email: { $ref: './common.yaml#/components/schemas/Email' }
+        scope:
+          type: string
+          enum: ['booking:lookup']
+
+    Jwks:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            required: [kty, kid, use, alg]
+            properties:
+              kty: { type: string, examples: [OKP] }
+              kid: { type: string }
+              use: { type: string, enum: [sig] }
+              alg: { type: string, examples: [EdDSA] }
+              crv: { type: string }
+              x: { type: string }
+              n: { type: string }
+              e: { type: string }
+            additionalProperties: true
+
+    # ------------------------------------------------------------ requests --
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      additionalProperties: false
+      properties:
+        email: { $ref: './common.yaml#/components/schemas/Email' }
+        password: { $ref: '#/components/schemas/Password' }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        phone: { $ref: './common.yaml#/components/schemas/PhoneE164' }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email: { $ref: './common.yaml#/components/schemas/Email' }
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+          writeOnly: true
+
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      additionalProperties: false
+      properties:
+        refreshToken: { type: string, minLength: 1 }
+
+    TokenRequest:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token: { type: string, minLength: 1 }
+
+    EmailRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email: { $ref: './common.yaml#/components/schemas/Email' }
+
+    PasswordResetConfirmRequest:
+      type: object
+      required: [token, newPassword]
+      additionalProperties: false
+      properties:
+        token: { type: string, minLength: 1 }
+        newPassword: { $ref: '#/components/schemas/Password' }
+
+    EmailOtpRequest:
+      type: object
+      required: [email, purpose]
+      additionalProperties: false
+      properties:
+        email: { $ref: './common.yaml#/components/schemas/Email' }
+        purpose:
+          $ref: '#/components/schemas/OtpPurpose'
+
+    EmailOtpVerifyRequest:
+      type: object
+      required: [email, purpose, code]
+      additionalProperties: false
+      properties:
+        email: { $ref: './common.yaml#/components/schemas/Email' }
+        purpose:
+          $ref: '#/components/schemas/OtpPurpose'
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+
+    OtpPurpose:
+      type: string
+      enum: [BOOKING_LOOKUP]
+      description: What the proof will be used for. Extensible.
+
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      additionalProperties: false
+      properties:
+        currentPassword: { type: string, minLength: 1, maxLength: 128, writeOnly: true }
+        newPassword: { $ref: '#/components/schemas/Password' }
+
+    Password:
+      type: string
+      minLength: 10
+      maxLength: 128
+      writeOnly: true
+      description: At least 10 characters. Checked against a breached-password list; no composition rules.
+
+    UpdateProfileRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        email: { $ref: './common.yaml#/components/schemas/Email' }
+        phone:
+          oneOf:
+            - $ref: './common.yaml#/components/schemas/PhoneE164'
+            - type: 'null'
+          description: Set to `null` to remove.
+
+    CreateUserRequest:
+      type: object
+      required: [email, name, roleId]
+      additionalProperties: false
+      properties:
+        email: { $ref: './common.yaml#/components/schemas/Email' }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        phone: { $ref: './common.yaml#/components/schemas/PhoneE164' }
+        roleId: { $ref: './common.yaml#/components/schemas/Id' }
+        tenantId:
+          $ref: './common.yaml#/components/schemas/Id'
+          description: Required when the role is `OPERATOR`; forbidden otherwise.
+
+    AdminUpdateUserRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        roleId: { $ref: './common.yaml#/components/schemas/Id' }
+        tenantId:
+          oneOf:
+            - $ref: './common.yaml#/components/schemas/Id'
+            - type: 'null'
+        status: { $ref: '#/components/schemas/UserStatus' }
+
+    CreateRoleRequest:
+      type: object
+      required: [key, name, permissions]
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{2,39}$'
+          description: Stable identifier, SCREAMING_SNAKE_CASE.
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        permissions:
+          type: array
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/PermissionKey' }
+
+    UpdateRoleRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        key:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{2,39}$'
+          description: Not allowed on built-in roles.
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        permissions:
+          type: array
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/PermissionKey' }
+
+    # ----------------------------------------------------------- resources --
+    UserStatus:
+      type: string
+      enum: [ACTIVE, DISABLED]
+
+    PermissionKey:
+      type: string
+      pattern: '^[a-z_]+:[a-z_]+(:[a-z_]+)?$'
+      examples: ['refund:issue', 'booking:read:any']
+
+    User:
+      type: object
+      required: [id, email, emailVerified, name, role, status, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        email: { $ref: './common.yaml#/components/schemas/Email' }
+        emailVerified: { type: boolean }
+        name: { type: string }
+        phone:
+          oneOf:
+            - $ref: './common.yaml#/components/schemas/PhoneE164'
+            - type: 'null'
+        role: { $ref: '#/components/schemas/RoleRef' }
+        tenantId:
+          oneOf:
+            - $ref: './common.yaml#/components/schemas/Id'
+            - type: 'null'
+          description: Operator (tenant) id from the catalog service. Set only for operator users.
+        status: { $ref: '#/components/schemas/UserStatus' }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+      examples:
+        - id: 4b0d2f0e-8f0c-4d0e-9a6f-0c2f6a5d1e11
+          email: asha@example.com
+          emailVerified: true
+          name: Asha Rao
+          phone: '+919876543210'
+          role: { id: 7c1a9b52-1c47-4e0a-8a3b-6d3e1f0b2a10, key: CUSTOMER, name: Customer }
+          tenantId: null
+          status: ACTIVE
+          createdAt: '2026-11-01T10:00:00Z'
+          updatedAt: '2026-11-01T10:00:00Z'
+
+    RoleRef:
+      type: object
+      required: [id, key, name]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        key: { type: string, examples: [CUSTOMER, OPERATOR, SUPPORT_AGENT, ADMIN] }
+        name: { type: string }
+
+    Role:
+      type: object
+      required: [id, key, name, system, permissions, createdAt, updatedAt]
+      properties:
+        id: { $ref: './common.yaml#/components/schemas/Id' }
+        key: { type: string }
+        name: { type: string }
+        description: { type: string }
+        system:
+          type: boolean
+          description: Built-in roles (`CUSTOMER`, `OPERATOR`, `SUPPORT_AGENT`, `ADMIN`) cannot be deleted.
+        permissions:
+          type: array
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/PermissionKey' }
+        createdAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+        updatedAt: { $ref: './common.yaml#/components/schemas/Timestamp' }
+
+    Permission:
+      type: object
+      required: [key, description]
+      properties:
+        key: { $ref: '#/components/schemas/PermissionKey' }
+        description: { type: string }
+
+    # --------------------------------------------------------------- lists --
+    UserList:
+      type: object
+      required: [data, page]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/User' }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+
+    RoleList:
+      type: object
+      required: [data, page]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Role' }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
+
+    PermissionList:
+      type: object
+      required: [data, page]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Permission' }
+        page: { $ref: './common.yaml#/components/schemas/Page' }
