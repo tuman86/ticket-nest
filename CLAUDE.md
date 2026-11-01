@@ -32,6 +32,19 @@ pnpm --filter @ticketnest/contracts test
 pnpm --filter @ticketnest/contracts exec vitest run src/contracts.test.ts -t "Money"
 ```
 
+Local infrastructure (Docker Compose in `infra/docker/`: Postgres 17, Redis 8, RabbitMQ 4 with the management UI):
+
+```sh
+cp infra/docker/.env.example infra/docker/.env   # once; .env is git-ignored
+pnpm infra:up      # start and wait until all three are healthy
+pnpm infra:down    # stop; data volumes are kept
+pnpm infra:reset   # DELETES all local data (volumes), then starts fresh
+```
+
+- Postgres has one database and one login role per service (`auth`/`auth_service`, `catalog`, `booking`, `payment`, `notification`). The init script runs only on an empty volume, so changing it or a DB password needs `pnpm infra:reset`.
+- Host ports bind to `127.0.0.1` and come from `.env` (`*_HOST_PORT`); change one if it clashes with a local install. RabbitMQ UI: `http://localhost:15672`.
+- The stack defines no exchanges or queues; the RabbitMQ topology belongs to service code (ADR-0005).
+
 Docs checks (no script exists; run from a shell on Node 24):
 
 ```sh

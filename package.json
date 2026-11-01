@@ -22,6 +22,9 @@
     "test": "turbo run test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "infra:up": "docker compose -f infra/docker/docker-compose.yml up -d --wait",
+    "infra:down": "docker compose -f infra/docker/docker-compose.yml down",
+    "infra:reset": "docker compose -f infra/docker/docker-compose.yml down --volumes && pnpm infra:up",
     "prepare": "husky"
   },
   "devDependencies": {
