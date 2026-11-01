@@ -1,0 +1,4 @@
+{
+  "extends": "@ticketnest/tsconfig/nextjs.json",
+  "include": ["src"]
+}

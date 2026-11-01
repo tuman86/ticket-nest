@@ -1,0 +1,28 @@
+{
+  "name": "@ticketnest/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Zod schemas shared across services and apps.",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./common": "./src/common/index.ts",
+    "./events": "./src/events/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ticketnest/eslint-config": "workspace:*",
+    "@ticketnest/tsconfig": "workspace:*",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

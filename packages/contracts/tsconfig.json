@@ -1,0 +1,4 @@
+{
+  "extends": "@ticketnest/tsconfig/library.json",
+  "include": ["src"]
+}
