@@ -1,0 +1,29 @@
+{
+  "name": "@ticketnest/logger",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Structured pino logger shared by every service.",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticketnest/config": "workspace:*",
+    "pino": "catalog:",
+    "pino-pretty": "catalog:"
+  },
+  "devDependencies": {
+    "@ticketnest/eslint-config": "workspace:*",
+    "@ticketnest/tsconfig": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
