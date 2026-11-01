@@ -1,0 +1,24 @@
+version: 2
+
+updates:
+  # pnpm workspaces are handled by the "npm" ecosystem (it detects pnpm-lock.yaml).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # TypeScript is pinned to ~6.0.x because typescript-eslint does not support
+      # TypeScript 7 yet (see CLAUDE.md). Allow patch updates only.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
