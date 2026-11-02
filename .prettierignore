@@ -7,3 +7,6 @@ coverage
 
 # Hand-formatted docs (tables, Mermaid, flow-style OpenAPI YAML); revisit later.
 docs/
+
+# Prisma client output
+services/*/src/generated/

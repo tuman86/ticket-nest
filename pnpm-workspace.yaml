@@ -29,7 +29,19 @@ catalog:
   esbuild: ^0.28.2
   tsx: ^4.23.15
   '@types/node': ^26.6.6
+  prisma: ~7.10.1 # stable line; npm `latest` is an 8.0 RC
+  '@prisma/client': ~7.10.1
+  '@prisma/adapter-pg': ~7.10.1
+  testcontainers: ^12.2.1
+  '@testcontainers/postgresql': ^12.2.1
 
 # Dependencies allowed to run install scripts. esbuild downloads its platform binary.
 allowBuilds:
   esbuild: true
+  # Prisma downloads its schema engine binary on install; `prisma generate` runs from there.
+  prisma: true
+  '@prisma/engines': true
+  # Optional native add-ons pulled in by testcontainers (ssh2). The pure-JS fallbacks are enough.
+  cpu-features: false
+  ssh2: false
+  protobufjs: false

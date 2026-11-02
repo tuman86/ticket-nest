@@ -3,15 +3,22 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Users, roles, tokens and guest access. Skeleton only: health endpoints, no business routes yet.",
+  "description": "Users, roles, tokens and guest access. Skeleton plus the database schema and repositories; no business routes yet.",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "tsx watch --env-file=.env src/server.ts",
     "build": "esbuild src/server.ts --bundle --platform=node --target=node24 --format=cjs --external:pg-native --outfile=dist/server.cjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:generate": "prisma generate",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:status": "prisma migrate status"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "catalog:",
+    "@prisma/client": "catalog:",
     "@ticketnest/config": "workspace:*",
     "@ticketnest/errors": "workspace:*",
     "@ticketnest/logger": "workspace:*",
@@ -23,6 +30,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "catalog:",
     "@ticketnest/eslint-config": "workspace:*",
     "@ticketnest/tsconfig": "workspace:*",
     "@types/cors": "catalog:",
@@ -32,7 +40,9 @@
     "@types/supertest": "catalog:",
     "esbuild": "catalog:",
     "eslint": "catalog:",
+    "prisma": "catalog:",
     "supertest": "catalog:",
+    "testcontainers": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
