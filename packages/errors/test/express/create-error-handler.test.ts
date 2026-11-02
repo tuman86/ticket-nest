@@ -5,16 +5,16 @@ import express, { type Express, type Request, type Response } from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-import { fromZodError } from '../from-zod-error';
+import { fromZodError } from '@/from-zod-error';
 import {
   ConflictError,
   ForbiddenError,
   NotFoundError,
   UnauthorizedError,
   ValidationError,
-} from '../http-errors';
-import { createErrorHandler, type CreateErrorHandlerOptions } from './create-error-handler';
-import { handleUnmatchedRoute } from './handle-unmatched-route';
+} from '@/http-errors';
+import { createErrorHandler, type CreateErrorHandlerOptions } from '@/express/create-error-handler';
+import { handleUnmatchedRoute } from '@/express/handle-unmatched-route';
 
 const SECRET_MESSAGE = 'connect to postgres://user:hunter2@db failed';
 const JSON_LIMIT = '1kb';

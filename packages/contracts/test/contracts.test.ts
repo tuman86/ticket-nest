@@ -10,7 +10,7 @@ import {
   ValidationProblem,
   pageOf,
   Id,
-} from './index';
+} from '@/index';
 
 describe('Money', () => {
   it('accepts integer minor units', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { baseConfigSchema } from './base-config-schema';
+import { baseConfigSchema } from '@/base-config-schema';
 
 describe('baseConfigSchema', () => {
   it('applies defaults for NODE_ENV and LOG_LEVEL', () => {

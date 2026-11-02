@@ -5,7 +5,7 @@ import {
   getCorrelationId,
   REQUEST_ID_HEADER,
   runWithCorrelationId,
-} from './correlation-context';
+} from '@/correlation-context';
 
 describe('correlation context', () => {
   it('is undefined outside a context', () => {

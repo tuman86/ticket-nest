@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-import { baseConfigSchema } from './base-config-schema';
-import { ConfigError } from './config-error';
-import { loadConfig } from './load-config';
+import { baseConfigSchema } from '@/base-config-schema';
+import { ConfigError } from '@/config-error';
+import { loadConfig } from '@/load-config';
 
 const serviceConfigSchema = baseConfigSchema.extend({
   DATABASE_URL: z.url(),

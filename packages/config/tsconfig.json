@@ -1,4 +1,7 @@
 {
   "extends": "@ticketnest/tsconfig/node.json",
-  "include": ["src"]
+  "compilerOptions": {
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["src", "test", "vitest.config.ts"]
 }

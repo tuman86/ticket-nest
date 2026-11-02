@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildLoggerOptions } from './build-logger-options';
+import { buildLoggerOptions } from '@/build-logger-options';
 
 const baseSettings = { serviceName: 'auth-service', level: 'info' } as const;
 

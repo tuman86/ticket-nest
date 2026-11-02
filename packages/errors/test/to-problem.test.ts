@@ -1,8 +1,8 @@
 import { Problem, ValidationProblem } from '@ticketnest/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { ConflictError, InternalServerError, NotFoundError, ValidationError } from './http-errors';
-import { toProblem } from './to-problem';
+import { ConflictError, InternalServerError, NotFoundError, ValidationError } from '@/http-errors';
+import { toProblem } from '@/to-problem';
 
 describe('toProblem', () => {
   it('builds a Problem with type URL, title, status and code', () => {

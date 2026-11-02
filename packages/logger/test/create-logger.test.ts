@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { runWithCorrelationId } from './correlation-context';
-import { createLogger, type CreateLoggerOptions } from './create-logger';
+import { runWithCorrelationId } from '@/correlation-context';
+import { createLogger, type CreateLoggerOptions } from '@/create-logger';
 
 type LogLine = Record<string, unknown>;
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { AppError } from './app-error';
+import { AppError } from '@/app-error';
 import {
   BadRequestError,
   ConflictError,
@@ -9,7 +9,7 @@ import {
   NotFoundError,
   UnauthorizedError,
   ValidationError,
-} from './http-errors';
+} from '@/http-errors';
 
 describe('http errors', () => {
   it.each([

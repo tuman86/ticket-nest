@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { fromZodError } from './from-zod-error';
-import { ValidationError } from './http-errors';
+import { fromZodError } from '@/from-zod-error';
+import { ValidationError } from '@/http-errors';
 
 const schema = z.object({
   email: z.email(),
