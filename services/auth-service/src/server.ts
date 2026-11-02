@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 import { Pool } from 'pg';
 
 import { createApp } from './app';
+import { composeAuthRouter } from './compose-auth-router';
 import { authConfigSchema, SERVICE_NAME } from './config';
 import { createPostgresCheck } from './health/postgres-check';
 import { createRedisCheck } from './health/redis-check';
@@ -60,6 +61,7 @@ function main(): void {
     corsOrigins: config.CORS_ORIGINS,
     jsonBodyLimit: config.JSON_BODY_LIMIT,
     isDebugInfoExposed: config.NODE_ENV === 'development',
+    routers: [composeAuthRouter(pool, logger)],
   });
 
   const server = app.listen(config.PORT, () => {

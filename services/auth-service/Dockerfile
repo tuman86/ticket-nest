@@ -15,6 +15,9 @@ RUN pnpm fetch
 COPY . .
 RUN pnpm install --offline --frozen-lockfile --filter @ticketnest/auth-service...
 RUN pnpm --filter @ticketnest/auth-service build
+# Password hashing uses the built-in crypto.argon2 (Node 24.7+). This is the binary copied into the
+# runtime stage, so the build fails here instead of the service failing at its first sign-up.
+RUN node -e "process.exit(typeof require('node:crypto').argon2 === 'function' ? 0 : 1)"
 
 # ---- runtime: bare Alpine, the Node binary and one bundled file ----
 # Copying only the binary leaves out npm, yarn and corepack (about 25 MB the service never uses,

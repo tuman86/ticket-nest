@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { type PrismaClient } from '../generated/prisma/client';
 import { createPrismaClient } from '../repositories/create-prisma-client';
 import { PrismaRefreshTokenRepository } from '../repositories/prisma-refresh-token.repository';
+import { PrismaRoleRepository } from '../repositories/prisma-role.repository';
 import { PrismaUnitOfWork } from '../repositories/prisma-unit-of-work';
 import { PrismaUserRepository } from '../repositories/prisma-user.repository';
 import { type CreateRefreshTokenInput } from '../repositories/refresh-token.repository';
@@ -18,6 +19,7 @@ export interface TestDatabase {
   readonly prisma: PrismaClient;
   readonly unitOfWork: PrismaUnitOfWork;
   readonly userRepository: PrismaUserRepository;
+  readonly roleRepository: PrismaRoleRepository;
   readonly refreshTokenRepository: PrismaRefreshTokenRepository;
   /**
    * Empties the tables tests write to. The seeded roles are kept.
@@ -49,6 +51,7 @@ export function createTestDatabase(databaseUrl: string): TestDatabase {
     prisma,
     unitOfWork: new PrismaUnitOfWork(prisma),
     userRepository: new PrismaUserRepository(prisma),
+    roleRepository: new PrismaRoleRepository(prisma),
     refreshTokenRepository: new PrismaRefreshTokenRepository(prisma),
     async resetTables() {
       await pool.query('TRUNCATE TABLE refresh_tokens, users CASCADE');

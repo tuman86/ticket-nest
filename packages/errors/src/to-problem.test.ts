@@ -22,6 +22,22 @@ describe('toProblem', () => {
     });
   });
 
+  it('uses a domain problem type when the error sets one, and keeps its status and title', () => {
+    const problem = toProblem(
+      new ConflictError({
+        code: 'EMAIL_ALREADY_REGISTERED',
+        problemType: 'email-already-registered',
+      }),
+    );
+
+    expect(problem).toEqual({
+      type: 'https://api.ticketnest.example/problems/email-already-registered',
+      title: 'Conflict',
+      status: 409,
+      code: 'EMAIL_ALREADY_REGISTERED',
+    });
+  });
+
   it('omits detail, instance and correlationId when absent', () => {
     expect(toProblem(new ConflictError())).toEqual({
       type: 'https://api.ticketnest.example/problems/conflict',
