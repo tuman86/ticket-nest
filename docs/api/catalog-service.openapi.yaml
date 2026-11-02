@@ -186,7 +186,7 @@ paths:
         cancelled schedules of their tenant (admins: all) and may use `status`.
         Ordered by `startsAt` ascending, then `id`.
       security: [{}, { bearerAuth: [] }]
-      x-permissions: ['schedule:read (to see non-published)']
+      x-permissions: ['schedule:read']
       parameters:
         - $ref: './common.yaml#/components/parameters/Limit'
         - $ref: './common.yaml#/components/parameters/Cursor'

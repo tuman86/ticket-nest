@@ -86,8 +86,7 @@ Operator grants are tenant-scoped by the token's `tenantId`, which comes from th
 
 ## 4. Open questions
 
-1. **Invalid key in the catalog spec.** `GET /v1/schedules` (`listSchedules`) lists `x-permissions: ['schedule:read (to see non-published)']`. That is not a valid key (it fails the `PermissionKey` pattern). It should read `schedule:read`, with the explanation moved to the description. Fix it in `catalog-service.openapi.yaml`.
-2. **Recent login for candidates.** Should `operator:manage`, `schedule:cancel` and `fee:manage` also require a recent login? Cancelling a show triggers mass refunds, and fees change revenue.
-3. **Who owns movies and stations?** The grants above assume movies are shared with operators and stations are platform-only. The PRD does not say.
-4. **Support access to users.** Does `SUPPORT_AGENT` need `user:read:any` to look up a customer, or is `booking:read:any` enough?
-5. **Billing and notification permissions.** None exist yet. Add them when the payment, booking and notification specs are written.
+1. **Recent login for candidates.** Should `operator:manage`, `schedule:cancel` and `fee:manage` also require a recent login? Cancelling a show triggers mass refunds, and fees change revenue.
+2. **Who owns movies and stations?** The grants above assume movies are shared with operators and stations are platform-only. The PRD does not say.
+3. **Support access to users.** Does `SUPPORT_AGENT` need `user:read:any` to look up a customer, or is `booking:read:any` enough?
+4. **Billing and notification permissions.** None exist yet. Add them when the payment, booking and notification specs are written.
