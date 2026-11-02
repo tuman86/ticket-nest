@@ -1,10 +1,12 @@
-// TODO: extend AppError once a shared one exists (code-quality rules: typed errors).
-export class ConfigError extends Error {
+import { InternalServerError } from '@ticketnest/errors';
+
+/** Startup failure: the environment is missing or invalid. Lists variable names, never values. */
+export class ConfigError extends InternalServerError {
   constructor(
     message: string,
     readonly problems: readonly string[],
   ) {
-    super(message);
+    super({ detail: message, code: 'CONFIG_INVALID' });
     this.name = 'ConfigError';
   }
 }

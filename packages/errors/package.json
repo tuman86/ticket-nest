@@ -1,0 +1,31 @@
+{
+  "name": "@ticketnest/errors",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed application errors and RFC 9457 problem responses shared by every service.",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./express": "./src/express/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticketnest/contracts": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ticketnest/eslint-config": "workspace:*",
+    "@ticketnest/tsconfig": "workspace:*",
+    "@types/express": "catalog:",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "express": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
