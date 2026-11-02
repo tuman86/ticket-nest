@@ -19,7 +19,10 @@ paths:
 - Access tokens expire in 10 minutes (`ACCESS_TOKEN_TTL_MS`). Never issue a long-lived access token.
 - Store refresh tokens hashed (SHA-256 of a random 256-bit value). Never store the raw token.
 - Rotate the refresh token on every use: revoke the old one and issue a new one in a single transaction.
-- Reusing an already-rotated refresh token is theft. Revoke the whole token family.
+- Reusing an already-rotated refresh token is theft. Revoke the whole token family. The one exception is a retry within `REFRESH_REUSE_GRACE_MS` (10 s) of the rotation, which returns the existing successor.
+- Refresh tokens expire after 7 days idle (`REFRESH_IDLE_TTL_MS`) and 30 days after login (`REFRESH_ABSOLUTE_TTL_MS`). Never extend a family past the absolute cap.
+- Put `auth_time` (last password login) in the access token. A refresh must copy it unchanged, never reset it.
+- Reject operations marked `x-recent-login: true` when `auth_time` is older than 5 minutes (`RECENT_LOGIN_MAX_AGE_MS`) with `reauthentication-required`.
 
 ## Authentication responses
 
