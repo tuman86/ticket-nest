@@ -1,0 +1,15 @@
+# Keeps the Docker build context small and free of local state or secrets.
+.git
+.claude
+.husky
+**/node_modules
+**/dist
+**/.turbo
+**/.next
+**/coverage
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+docs
+infra
