@@ -18,7 +18,7 @@ Requires **Node 24** (`.nvmrc`) and pnpm 12 (pinned by `packageManager`; `corepa
 
 ```sh
 pnpm install
-pnpm lint                 # turbo: eslint in every workspace
+pnpm lint                 # turbo: eslint in every workspace, then the test-layout check
 pnpm typecheck            # turbo: tsc --noEmit in every workspace
 pnpm test                 # turbo: vitest in every workspace (auth-service integration tests need Docker)
 pnpm format:check         # prettier --check . (pnpm format to write)
@@ -29,7 +29,7 @@ Single workspace / single test:
 
 ```sh
 pnpm --filter @ticketnest/contracts test
-pnpm --filter @ticketnest/contracts exec vitest run src/contracts.test.ts -t "Money"
+pnpm --filter @ticketnest/contracts exec vitest run test/contracts.test.ts -t "Money"
 ```
 
 Local infrastructure (Docker Compose in `infra/docker/`: Postgres 17, Redis 8, RabbitMQ 4 with the management UI):
@@ -72,12 +72,13 @@ Husky is installed by `pnpm install` (the root `prepare` script sets `core.hooks
 - **Strictness is high and enforced:** `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`, and type-aware `strictTypeChecked` ESLint (floating promises are errors). Use `import { type X }` for type-only imports.
 - **tsconfig presets** (`@ticketnest/tsconfig`): `node.json` for services, `library.json` for packages, `nextjs.json` for apps. `types` defaults to `[]`, so Node types come only from `node.json`. The ESLint `next` preset and Next TS plugin are deliberately deferred until a Next app is bootstrapped.
 - **Prettier ignores `docs/`** on purpose (hand-formatted tables, Mermaid, flow-style YAML). Don't run it over docs.
-- **Service skeleton (`services/auth-service` is the template; copy it for the next service):** `src/app.ts` exports `createApp(dependencies)` (middleware, health router, error handler; no sockets, no clients) and `src/server.ts` is the composition root that builds the pg `Pool`, the Redis client and the server. Tests import `createApp` with fakes (Supertest, `src/test-support/create-test-app.ts`). Feature routers are passed in through `routers`. `/health/live` never touches a dependency; `/health/ready` checks Postgres and Redis (2s timeout each), reports only `up`/`down` and never driver messages, and returns 503 once shutdown starts. SIGTERM/SIGINT stop the listener, let in-flight requests finish, close the pool and Redis, then exit (forced after `SHUTDOWN_TIMEOUT_MS`). A service gets `dev`/`build` scripts only when it becomes real: `dev` is `tsx watch --env-file=.env`, `build` is esbuild into one `dist/server.cjs`.
+- **Service skeleton (`services/auth-service` is the template; copy it for the next service):** `src/app.ts` exports `createApp(dependencies)` (middleware, health router, error handler; no sockets, no clients) and `src/server.ts` is the composition root that builds the pg `Pool`, the Redis client and the server. Tests import `createApp` with fakes (Supertest, `test/support/create-test-app.ts`). Feature routers are passed in through `routers`. `/health/live` never touches a dependency; `/health/ready` checks Postgres and Redis (2s timeout each), reports only `up`/`down` and never driver messages, and returns 503 once shutdown starts. SIGTERM/SIGINT stop the listener, let in-flight requests finish, close the pool and Redis, then exit (forced after `SHUTDOWN_TIMEOUT_MS`). A service gets `dev`/`build` scripts only when it becomes real: `dev` is `tsx watch --env-file=.env`, `build` is esbuild into one `dist/server.cjs`.
 - **Passwords:** hashed with argon2id through Node's built-in `crypto.argon2` (Node 24.7+), behind the `PasswordHasher` interface in `services/auth-service/src/auth/`. Parameters are named constants at the OWASP minimum and are read back from the stored PHC string on verify. See ADR-0013 and `.claude/rules/security.md`. `POST /v1/auth/register` may answer 409 for a taken email, so it must be rate limited, and that limiter must land before the route is exposed through the gateway.
 - **Docker image:** build from the repo root, `docker build -f services/auth-service/Dockerfile -t ticketnest/auth-service .`. It bundles the service, runs it on bare Alpine as a non-root user with only the Node binary, and needs `DATABASE_URL` and `REDIS_URL` (on the compose network the hosts are `postgres` and `redis`). The bundle has no pino transport, so pretty logs work only under `pnpm dev`. Install scripts are allowed only for esbuild, prisma and @prisma/engines (`allowBuilds` in `pnpm-workspace.yaml`).
 - **Prisma (auth-service):** pinned to the stable 7.10.x line in the catalog (`latest` on npm is an 8.0 RC). The client is generated into `src/generated/prisma` (git-ignored) by the service's `postinstall`; run `pnpm --filter @ticketnest/auth-service db:generate` after editing `prisma/schema.prisma`. The connection URL comes from `DATABASE_URL` (`services/auth-service/.env`) through `prisma.config.ts`. Only `src/repositories/` imports the generated client; `createPrismaClient(pool)` reuses the `pg` Pool and is wired in `src/compose-auth-router.ts`. The generated client reads `import.meta.url`, so the esbuild `build` script defines it from `__filename` for the CJS bundle (without that the bundle crashes at startup).
 - **Migrations:** `db:migrate:dev` (local, needs the `CREATEDB` right the init script grants; on an old volume run `ALTER ROLE auth_service CREATEDB` once, or `pnpm infra:reset`), `db:migrate:deploy`, `db:migrate:status`. Create with `pnpm --filter @ticketnest/auth-service exec prisma migrate dev --create-only --name <change>`, review the SQL, then apply. See `.claude/rules/database.md`.
-- **Integration tests:** `*.integration.test.ts` files form a second Vitest project that starts a throwaway `postgres:17.11-alpine` through Testcontainers (Docker must be running) and applies the real migration SQL. `pnpm exec vitest run --project unit` skips them.
+- **Tests live in `test/`, never in `src/`** (rule: `.claude/rules/testing.md`; `pnpm lint` enforces it). Services use `test/unit`, `test/integration` and `test/support`; packages and apps use one `test/` mirroring `src/`. Tests import production code as `@/...` (`paths` in `tsconfig.json` plus `resolve.alias` in `vitest.config.ts`).
+- **Integration tests:** the files under `test/integration/` form a second Vitest project that starts a throwaway `postgres:17.11-alpine` through Testcontainers (Docker must be running) and applies the real migration SQL. `pnpm exec vitest run --project unit` skips them.
 
 ## Architecture (big picture)
 
@@ -110,3 +111,4 @@ Short, enforceable rules live in `.claude/rules/`:
 
 - `.claude/rules/data-access.md` (scoped to `services/**`): table ownership, repository-only writes, service-layer transactions, outbox publishing.
 - `.claude/rules/code-quality.md` (always loaded): layering and DI, DRY, naming, and the code checklist.
+- `.claude/rules/testing.md` (always loaded): where tests live (`test/`), the `@/` alias, and how to write them.

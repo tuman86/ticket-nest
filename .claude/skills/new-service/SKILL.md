@@ -55,7 +55,8 @@ Keep `"type": "module"`, scripts (`dev`, `build`, `lint`, `typecheck`, `test`) a
 Every item must exist in `services/<name>/` (paths relative to it):
 
 - [ ] `package.json` (scripts `dev`, `build`, `lint`, `typecheck`, `test`; deps and devDeps as in the template, minus dropped ones)
-- [ ] `tsconfig.json` (extends `@ticketnest/tsconfig/node.json`, `include: ["src"]`)
+- [ ] `tsconfig.json` (extends `@ticketnest/tsconfig/node.json`, `paths: { "@/*": ["./src/*"] }`, `include: ["src", "test", "prisma.config.ts", "vitest.config.ts"]`; drop `prisma.config.ts` when the service has no Prisma)
+- [ ] `vitest.config.ts` (the `@/` alias plus a `unit` project over `test/unit/**`; keep the `integration` project and `test/support/integration-global-setup.ts` only when the service has a database)
 - [ ] `eslint.config.mjs` (`export default node` from `@ticketnest/eslint-config`)
 - [ ] `Dockerfile` (filter name, `PORT`, `EXPOSE`, bundle path all renamed)
 - [ ] `.env.example` (names and local placeholders only, matching `infra/docker/.env.example`)
@@ -65,8 +66,9 @@ Every item must exist in `services/<name>/` (paths relative to it):
 - [ ] `src/shutdown.ts`
 - [ ] `src/health/` (`dependency-check.ts`, `health.router.ts`, plus one `*-check.ts` per real dependency)
 - [ ] `src/http/` (`request-id.middleware.ts`, `request-logger.middleware.ts`)
-- [ ] `src/test-support/create-test-app.ts`
-- [ ] Tests: `src/config.test.ts`, `src/shutdown.test.ts`, `src/health/health.test.ts`, `src/http/app.test.ts`
+- [ ] `test/support/create-test-app.ts`
+- [ ] Tests: `test/unit/config.test.ts`, `test/unit/shutdown.test.ts`, `test/unit/health/health.test.ts`, `test/unit/http/app.test.ts`
+- [ ] Test layout follows `.claude/rules/testing.md`: the template's `test/` also holds auth-specific tests and helpers (register, repositories, hasher, in-memory fakes). Do not copy those; keep only the files listed above, and run `node scripts/check-test-layout.mjs`.
 - [ ] Root `.dockerignore` already covers all services; do not add per-service copies
 - [ ] `pnpm-workspace.yaml` `catalog:` has every dependency the copy uses (add a version there, never in the service)
 
