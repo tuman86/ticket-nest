@@ -21,8 +21,8 @@ pnpm format        # prettier --write .
 pnpm format:check  # prettier --check .
 ```
 
-`dev` and `build` are not defined yet: the apps and services are empty placeholders until each
-one is implemented.
+`dev` and `build` exist only where a service is real: `auth-service` today (see its `.env.example`).
+The other apps and services are empty placeholders until each one is implemented.
 
 ## Layout
 
