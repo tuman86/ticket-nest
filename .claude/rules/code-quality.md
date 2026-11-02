@@ -32,6 +32,27 @@ class BookingService {
 - No abbreviations: `request`, `response`, `booking`, not `req`, `res`, `bkg`. Allowed: `id`, `url`, `tx`.
 - No single-letter variables except `i`/`j` in loops of 5 lines or fewer.
 
+## Documentation
+
+- Every function, method and exported arrow function gets a TSDoc block (`/** ... */`), including private ones.
+- Start with one sentence saying what it does and, when not obvious, why it exists.
+- Add `@param` for each parameter and `@returns` for any non-void result. Describe meaning, units and constraints (`amountMinor` in cents), never the type. TypeScript already has it.
+- Add `@throws` for each typed error the function can raise (`@throws SeatUnavailableError when the seat is already claimed`).
+- Note side effects, transactions, idempotency and ordering assumptions when they exist.
+- Comments explain intent. Never restate the code. Keep them current when the function changes.
+
+```ts
+/**
+ * Claims one seat for a booking so two customers can never hold the same seat.
+ *
+ * @param bookingId - Booking that will own the claim.
+ * @param seatId - Seat to claim for the whole schedule.
+ * @returns The created claim.
+ * @throws SeatUnavailableError when another booking already claimed the seat.
+ */
+async function claimSeat(bookingId: string, seatId: string): Promise<SeatClaim> {}
+```
+
 ## Checklist
 
 - [ ] No `any`. Use `unknown` and narrow it with Zod.
@@ -42,3 +63,4 @@ class BookingService {
 - [ ] No secrets in code. Read them from the Zod-validated env module; `.env.example` holds names only.
 - [ ] Early returns over nesting deeper than 2 levels.
 - [ ] Functions stay under ~40 lines.
+- [ ] Every function has a TSDoc block with `@param`, `@returns` and `@throws` where they apply.
