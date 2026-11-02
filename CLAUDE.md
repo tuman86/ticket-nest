@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## State of the project
 
-TicketNest is a demo booking platform for movies, buses and trains, designed as microservices. Right now the repo is **design docs plus an empty scaffold**: every app and the services other than `auth-service` contain only a placeholder `src/index.ts`. The real code is `packages/contracts`, `packages/config`, `packages/logger`, `packages/errors` and the `services/auth-service` skeleton (health endpoints only, no business routes, no database schema). Do not assume a service, Dockerfile, database or broker exists; check first.
+TicketNest is a demo booking platform for movies, buses and trains, designed as microservices. Right now the repo is **design docs plus an empty scaffold**: every app and the services other than `auth-service` contain only a placeholder `src/index.ts`. The real code is `packages/contracts`, `packages/config`, `packages/logger`, `packages/errors` and the `services/auth-service` skeleton (health endpoints, the Prisma schema with its first migration, and the user and refresh-token repositories; no business routes yet). Do not assume a service, Dockerfile, database or broker exists; check first.
 
 The source of truth for what to build is in `docs/`:
 
@@ -20,7 +20,7 @@ Requires **Node 24** (`.nvmrc`) and pnpm 12 (pinned by `packageManager`; `corepa
 pnpm install
 pnpm lint                 # turbo: eslint in every workspace
 pnpm typecheck            # turbo: tsc --noEmit in every workspace
-pnpm test                 # turbo: vitest in every workspace
+pnpm test                 # turbo: vitest in every workspace (auth-service integration tests need Docker)
 pnpm format:check         # prettier --check . (pnpm format to write)
 pnpm build                # currently a no-op: no workspace defines a build script
 ```
@@ -73,8 +73,10 @@ Husky is installed by `pnpm install` (the root `prepare` script sets `core.hooks
 - **tsconfig presets** (`@ticketnest/tsconfig`): `node.json` for services, `library.json` for packages, `nextjs.json` for apps. `types` defaults to `[]`, so Node types come only from `node.json`. The ESLint `next` preset and Next TS plugin are deliberately deferred until a Next app is bootstrapped.
 - **Prettier ignores `docs/`** on purpose (hand-formatted tables, Mermaid, flow-style YAML). Don't run it over docs.
 - **Service skeleton (`services/auth-service` is the template; copy it for the next service):** `src/app.ts` exports `createApp(dependencies)` (middleware, health router, error handler; no sockets, no clients) and `src/server.ts` is the composition root that builds the pg `Pool`, the Redis client and the server. Tests import `createApp` with fakes (Supertest, `src/test-support/create-test-app.ts`). Feature routers are passed in through `routers`. `/health/live` never touches a dependency; `/health/ready` checks Postgres and Redis (2s timeout each), reports only `up`/`down` and never driver messages, and returns 503 once shutdown starts. SIGTERM/SIGINT stop the listener, let in-flight requests finish, close the pool and Redis, then exit (forced after `SHUTDOWN_TIMEOUT_MS`). A service gets `dev`/`build` scripts only when it becomes real: `dev` is `tsx watch --env-file=.env`, `build` is esbuild into one `dist/server.cjs`.
-- **Docker image:** build from the repo root, `docker build -f services/auth-service/Dockerfile -t ticketnest/auth-service .`. It bundles the service, runs it on bare Alpine as a non-root user with only the Node binary, and needs `DATABASE_URL` and `REDIS_URL` (on the compose network the hosts are `postgres` and `redis`). The bundle has no pino transport, so pretty logs work only under `pnpm dev`. Install scripts are allowed only for esbuild (`allowBuilds` in `pnpm-workspace.yaml`).
-- Prisma: `latest` on npm is currently an 8.0 RC; use the stable 7.10.x line when database work starts.
+- **Docker image:** build from the repo root, `docker build -f services/auth-service/Dockerfile -t ticketnest/auth-service .`. It bundles the service, runs it on bare Alpine as a non-root user with only the Node binary, and needs `DATABASE_URL` and `REDIS_URL` (on the compose network the hosts are `postgres` and `redis`). The bundle has no pino transport, so pretty logs work only under `pnpm dev`. Install scripts are allowed only for esbuild, prisma and @prisma/engines (`allowBuilds` in `pnpm-workspace.yaml`).
+- **Prisma (auth-service):** pinned to the stable 7.10.x line in the catalog (`latest` on npm is an 8.0 RC). The client is generated into `src/generated/prisma` (git-ignored) by the service's `postinstall`; run `pnpm --filter @ticketnest/auth-service db:generate` after editing `prisma/schema.prisma`. The connection URL comes from `DATABASE_URL` (`services/auth-service/.env`) through `prisma.config.ts`. Only `src/repositories/` imports the generated client; `createPrismaClient(pool)` reuses the `pg` Pool but is not wired into `server.ts` until a service uses the repositories.
+- **Migrations:** `db:migrate:dev` (local, needs the `CREATEDB` right the init script grants; on an old volume run `ALTER ROLE auth_service CREATEDB` once, or `pnpm infra:reset`), `db:migrate:deploy`, `db:migrate:status`. Create with `pnpm --filter @ticketnest/auth-service exec prisma migrate dev --create-only --name <change>`, review the SQL, then apply. See `.claude/rules/database.md`.
+- **Integration tests:** `*.integration.test.ts` files form a second Vitest project that starts a throwaway `postgres:17.11-alpine` through Testcontainers (Docker must be running) and applies the real migration SQL. `pnpm exec vitest run --project unit` skips them.
 
 ## Architecture (big picture)
 

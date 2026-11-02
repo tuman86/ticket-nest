@@ -1,0 +1,88 @@
+// auth-service database. Private to this service: no other service reads or writes these tables.
+// Connection URL: prisma.config.ts. Conventions: PascalCase models, snake_case tables and columns.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+
+  @@map("user_status")
+}
+
+/// A named bundle of permissions. The four built-in roles are seeded by the first migration.
+model Role {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String   @unique
+  name        String
+  description String?
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  users User[]
+
+  @@map("roles")
+}
+
+model User {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Normalized: trimmed and lower-cased. A CHECK constraint in the migration enforces it.
+  email           String     @unique
+  emailVerifiedAt DateTime?  @map("email_verified_at") @db.Timestamptz(3)
+  /// Null until the user sets a password (staff accounts get an emailed link).
+  passwordHash    String?    @map("password_hash")
+  name            String
+  phone           String?
+  roleId          String     @map("role_id") @db.Uuid
+  /// Operator (tenant) id from the catalog service. Set only for operator users. Not a foreign key.
+  tenantId        String?    @map("tenant_id") @db.Uuid
+  status          UserStatus @default(ACTIVE)
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  role          Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  refreshTokens RefreshToken[]
+
+  @@index([roleId])
+  @@index([tenantId])
+  @@map("users")
+}
+
+/// One row per issued refresh token. Rotation links rows through `replacedById`; all rows of
+/// one login share a `familyId`.
+model RefreshToken {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  familyId     String    @map("family_id") @db.Uuid
+  /// SHA-256 of the opaque token, lower-case hex. The raw token is never stored.
+  tokenHash    String    @unique @map("token_hash") @db.VarChar(64)
+  /// When the user last entered their password. Copied unchanged to every successor.
+  authTime     DateTime  @map("auth_time") @db.Timestamptz(3)
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  /// Set when a successor was issued. Drives the reuse grace window.
+  rotatedAt    DateTime? @map("rotated_at") @db.Timestamptz(3)
+  replacedById String?   @unique @map("replaced_by_id") @db.Uuid
+  /// Set on logout, password change or detected reuse.
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(3)
+  userAgent    String?   @map("user_agent") @db.VarChar(512)
+  /// IPv4 or IPv6 text form (at most 45 characters).
+  ip           String?   @db.VarChar(45)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacedBy RefreshToken? @relation("RotationChain", fields: [replacedById], references: [id], onDelete: SetNull)
+  replaces   RefreshToken? @relation("RotationChain")
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
