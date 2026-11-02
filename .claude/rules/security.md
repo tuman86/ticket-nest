@@ -8,7 +8,9 @@ paths:
 ## Passwords
 
 - Hash passwords with argon2id. Never use bcrypt, SHA-*, MD5 or a hand-rolled scheme.
-- Keep the argon2 parameters (memory, iterations, parallelism) as named constants and never inline them.
+- Use Node's built-in async `crypto.argon2` (Node 24.7+) behind the `PasswordHasher` interface. No native addon. Use a random 16-byte salt per hash and store the result as a PHC string (`$argon2id$v=19$m=…,t=…,p=…$salt$hash`).
+- Keep the argon2 parameters (memory, iterations, parallelism) as named constants, never inline them, and never below the OWASP minimum (19 MiB, 2 iterations, 1 lane). On verify, read the parameters from the stored string, not from the constants, so raising them later does not break old hashes.
+- Compare hashes with `timingSafeEqual`. A malformed stored hash is a failed verification, never a thrown error that reaches the client.
 - Never store, return or log a plaintext password. Never put a password hash in an API response or event.
 
 ## Tokens
@@ -28,7 +30,8 @@ paths:
 
 - Return the same generic message, status and shape for every login failure ("Invalid email or password"). Never say which part was wrong.
 - Verify against a dummy hash when the user does not exist, so timing does not reveal accounts.
-- Do the same for registration, password reset and OTP requests. The response must not reveal whether an email exists.
+- Do the same for password reset and OTP requests, and for refresh. The response must not reveal whether an email exists. (Registration is the one exception, below.)
+- Registration may answer `409 email-already-registered` for a taken email (ADR-0013). That makes it an account-enumeration oracle, so it must be rate limited by IP and by email, and `POST /v1/auth/register` must not be exposed through the gateway until that limiter has landed. Never log the email on the 409 path.
 - Rate limit every auth endpoint (login, register, refresh, OTP, password reset) with a Redis-backed limiter, keyed by IP and by account identifier.
 - Return `429` with `Retry-After`. Limits are named constants.
 

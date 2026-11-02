@@ -66,11 +66,46 @@ Risky actions require a recent password login, instead of shortening every token
 - Sensitive actions: `refund:approve`, `refund:issue`, role and permission edits, `policy:manage`, and user disabling. The final list lives with the permission catalogue.
 - The owning service rejects the call when `auth_time` is older than 5 minutes (`RECENT_LOGIN_MAX_AGE_MS`). The client then asks for the password again and receives a token with a new `auth_time`.
 
+### Registration and password hashing
+
+**Registration** (`POST /v1/auth/register`) creates a `CUSTOMER` account only. Staff accounts come from an admin. The role is chosen by the service, never by the request body, and the body schema rejects unknown fields (`role`, `tenantId`, `passwordHash`). It returns `201` with the `User` and issues no tokens. The user logs in afterwards.
+
+| Topic | Rule |
+|---|---|
+| Duplicate email | `409 email-already-registered`, as in the OpenAPI spec. The email is normalized first (trimmed, lower-cased), and the unique index is the final arbiter if two requests race. |
+| Password policy | 10 to 128 characters, no composition rules, and a breached-password check behind a `BreachedPasswordChecker` interface. The first implementation is a small bundled denylist. A k-anonymity lookup against a breach service can replace it later. |
+| Response | Built field by field from an allow-list and parsed through the `User` schema. `passwordHash` is never part of any response, log line or event. |
+| Verification email | Out of this change. It needs the outbox and the email-verification token flow. Until then `emailVerified` stays `false`. |
+
+**Trade-off: registration may reveal that an email is taken.** The `409` lets a caller probe which emails have accounts. We accept this because the alternative (always answering `202` and emailing the owner "you already have an account") needs the email pipeline first and makes the sign-up form harder to use. The anti-enumeration rule therefore applies to login, refresh, password reset and OTP requests, and registration is the documented exception. In exchange:
+
+- Registration must be rate limited by IP and by email with the Redis-backed limiter, answering `429` with `Retry-After`.
+- **The limiter must land before `/v1/auth/register` is exposed through the gateway.** Until then the route exists in auth-service only.
+- The `409` path never logs the email.
+- If the limiter proves too weak, switch to the always-`202` flow. That is an API change and needs a new spec version.
+
+**Password hashing** uses **argon2id** through Node's built-in asynchronous `crypto.argon2` (Node 24.7 or later; this repo requires 24.11). There is no native addon to build, which suits the Alpine image that holds only the Node binary. It runs on the libuv thread pool, so hashing does not block the event loop. The service depends on a `PasswordHasher` interface, and only the composition root names the argon2 class.
+
+| Parameter | Value | Note |
+|---|---|---|
+| Algorithm | argon2id | Never bcrypt, SHA-* or a custom scheme. |
+| Memory | 19 456 KiB (19 MiB) | OWASP minimum for `t=2, p=1`. Raise it, never lower it. |
+| Iterations | 2 | OWASP minimum. |
+| Parallelism | 1 | OWASP minimum. |
+| Salt | 16 random bytes per hash | From `crypto.randomBytes`. |
+| Output | 32 bytes | |
+| Stored form | PHC string `$argon2id$v=19$m=…,t=…,p=…$salt$hash` | Base64 without padding. |
+
+- **Verify reads the parameters from the stored string**, not from the constants, and compares with `timingSafeEqual`. Raising the constants later therefore does not invalidate old hashes. A login that finds an older parameter set can rehash on success.
+- **A malformed or unsupported stored hash is a failed verification**, not a thrown error, so a damaged row can never turn into a `500` that tells an attacker something. Parameters read from a stored string are also bounded before use, so a tampered row cannot request huge memory.
+- **Runtime guard:** the hasher refuses to start if `crypto.argon2` is missing. The Dockerfile build stage checks the same Node binary that is copied into the runtime image, so an older Node cannot slip into production.
+- **Tests** cover a round trip, a wrong password, unique salts, malformed hashes and a reference vector (RFC 9106 test vector for argon2id), so a change in Node's implementation cannot silently change the output.
+
 ### Out of scope
 
 - Guest sessions, email OTP and guest-to-account merge: ADR-0014.
 - Tenancy enforcement in the repository layer or with row-level security: ADR-0015.
-- Password hashing and the other implementation rules: `.claude/rules/security.md`.
+- Other implementation rules: `.claude/rules/security.md`.
 
 ## Consequences
 
@@ -124,6 +159,7 @@ Risky actions require a recent password login, instead of shortening every token
 | 10 | **Two apps, two cookies** | A mistake in cookie names or domains could let a customer session reach the console. | Separate cookie names, `Strict` on the console, and an authorization check in the console on every call regardless of the cookie. |
 | 11 | **We own the whole auth surface** | Credential stuffing, account enumeration, password reset abuse and OTP abuse are our problem. There is no MFA. | Rate limiting, generic login errors and the other rules in `.claude/rules/security.md`. MFA stays out of scope. |
 | 12 | **Token family table growth** | Every refresh adds a row, and old rows pile up. | Keep rows until `expiresAt` plus a retention period, then delete them in batches. The 30-day absolute cap bounds how long any family can live. |
+| 13 | **Registration reveals taken emails** | `409 email-already-registered` lets a caller enumerate accounts. | Rate limit by IP and email, keep the route off the gateway until the limiter lands, never log the email on that path, and keep the always-`202` flow as the fallback. |
 
 ## Follow-ups
 
