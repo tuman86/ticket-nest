@@ -10,7 +10,8 @@ create_service_database() {
 
   psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
     --set=role_name="$role_name" --set=database_name="$database_name" --set=password="$password" <<'SQL'
-SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'role_name', :'password') \gexec
+-- CREATEDB is local-only: `prisma migrate dev` creates a temporary shadow database.
+SELECT format('CREATE ROLE %I LOGIN CREATEDB PASSWORD %L', :'role_name', :'password') \gexec
 SELECT format('CREATE DATABASE %I OWNER %I', :'database_name', :'role_name') \gexec
 SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', :'database_name') \gexec
 SQL
