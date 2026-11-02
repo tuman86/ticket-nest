@@ -1,0 +1,134 @@
+# ADR-0013: Authentication and authorization strategy
+
+- **Status:** Proposed (a **[Rec]** decision from [`architecture.md`](../architecture.md) §13, not yet ratified)
+- **Date:** 2026-11-02
+- **Deciders:** Project owner
+- **Related:** [`architecture.md`](../architecture.md) §13 and §14, [`prd.md`](../prd.md) §2.1, [`auth-service.openapi.yaml`](../api/auth-service.openapi.yaml)
+
+## Context and problem
+
+TicketNest has two Next.js apps (`web` for customers, `console` for operators and admins), an API gateway, and five services that each need to know who is calling and what they may do. Customers can be registered users or guests. Operator users are scoped to one tenant.
+
+The design has to satisfy these constraints:
+
+- Zero trust: the gateway **and** every service verify the caller's token. No service trusts a header set by another.
+- Database per service: only auth-service owns user, role and token data. Other services must not query it.
+- Permissions are editable bundles (PRD §2.1), so the token has to carry them or a service has to look them up.
+- Browsers must not be able to steal a long-lived credential through script injection.
+
+## Decision
+
+### Access token
+
+- A JWT signed with **EdDSA** (RS256 is the fallback if a library or gateway lacks EdDSA support). Never a shared secret.
+- Lifetime: **10 minutes**.
+- Header: `kid`. Claims: `sub`, `role`, `permissions[]`, `tenantId` (operator users only), `auth_time` (when the user last entered their password), `iss`, `aud`, `iat`, `exp`.
+- auth-service publishes the public keys at `/.well-known/jwks.json`. The gateway and every service verify with the public key only, cache the key set, and refetch it when they see an unknown `kid`. Only auth-service holds the private key.
+- Key rotation works by overlap: publish the new key, start signing with it, and keep the old public key in the set until the last token signed with it has expired.
+- Verifiers check `alg`, `iss`, `aud` and `exp` on every request and reject anything else.
+
+### Refresh token
+
+- An **opaque** random value (256 bits), never a JWT.
+- Stored only as a **SHA-256 hash** in auth-service's `RefreshToken` table, with `familyId`, `replacedBy`, `expiresAt` and `revokedAt`.
+- **Rotated on every use.** In one transaction the old token is marked as replaced and a new one in the same family is issued.
+- **Reuse detection:** presenting a token that was already rotated is treated as theft. The whole family is revoked and the call fails with `refresh-token-reuse`.
+- **Grace window:** if the presented token was rotated less than 10 seconds ago (`REFRESH_REUSE_GRACE_MS`), the call is treated as a retry or a two-tab race. It returns the existing successor and does not revoke. This avoids logging users out after a lost response.
+- **Session limits:** each token expires after 7 days idle (`REFRESH_IDLE_TTL_MS`), and the family has a hard cap of 30 days from login (`REFRESH_ABSOLUTE_TTL_MS`). A refresh never extends a family past the cap, so a stolen but regularly used session cannot live forever.
+- Logout revokes the presented token. Password reset revokes all of the user's tokens. A password change revokes all of the user's other tokens. Disabling a user revokes their tokens.
+
+### Where tokens live in the Next.js apps
+
+- The **refresh token** is kept in an `httpOnly`, `Secure`, `SameSite` cookie. `web` uses `Lax`. `console` uses `Strict`.
+- The **access token** is kept in memory only. It is never written to `localStorage`, `sessionStorage` or a readable cookie.
+- The auth API returns `refreshToken` in the JSON body (`TokenPair`), so a browser cannot set the cookie by itself. Each app has server-side **Next.js route handlers** under `/api/auth/*` that call the gateway, set and clear the cookie, and return only the access token to the browser. The browser never sees the refresh token. The OpenAPI spec does not change.
+- On a full page load the app has no access token. It calls the refresh route handler once to get one.
+- The client refreshes proactively at about 80% of the access-token lifetime (around 8 minutes), and retries once after a `401` for an expired token.
+- Refresh runs as a single in-flight request per tab. Tabs coordinate with the Web Locks API (`navigator.locks`), so a second tab waits and reads the rotated cookie instead of replaying the old token.
+- The two apps use different cookie names, so a customer session cannot be replayed against the console.
+
+### Roles and permissions
+
+This ADR keeps the permission-based RBAC already defined in the PRD. It does not introduce a simple USER/ADMIN split.
+
+| Concept | Rule |
+|---|---|
+| Roles | Customer, Operator, Support Agent, Admin. Guests have no role and use a separate guest token. |
+| Role | A named bundle of permissions. An admin can edit which permissions a role holds. A user holds exactly one role. |
+| Permission | A string shaped `resource:action[:scope]`, for example `inventory:create` or `refund:approve`. |
+| Claims | `role` and `permissions[]` are copied into the access token at issue time. A permission edit takes effect within one token lifetime (10 minutes). |
+| Tenancy | `tenantId` is taken from the verified token, never from a request body. Another tenant's resources answer `404`. |
+
+### Recent login for sensitive actions
+
+Risky actions require a recent password login, instead of shortening every token. Refreshing does not update `auth_time`, so it only moves when the user actually signs in again.
+
+- Sensitive actions: `refund:approve`, `refund:issue`, role and permission edits, `policy:manage`, and user disabling. The final list lives with the permission catalogue.
+- The owning service rejects the call when `auth_time` is older than 5 minutes (`RECENT_LOGIN_MAX_AGE_MS`). The client then asks for the password again and receives a token with a new `auth_time`.
+
+### Out of scope
+
+- Guest sessions, email OTP and guest-to-account merge: ADR-0014.
+- Tenancy enforcement in the repository layer or with row-level security: ADR-0015.
+- Password hashing and the other implementation rules: `.claude/rules/security.md`.
+
+## Consequences
+
+**Good**
+
+- Verification is stateless. No request needs a call to auth-service.
+- Verifiers hold only a public key, so a compromised service cannot mint tokens.
+- A stolen refresh token is detected the first time both the thief and the real user use it.
+- A script injected into the page cannot read the refresh token.
+
+**Bad**
+
+- Revocation is delayed by up to the token lifetime. See weak point 1.
+- Both Next.js apps need server-side route handlers, which adds an extra hop.
+- We own the full authentication surface. See weak point 11.
+
+## Alternatives and trade-offs
+
+### Server-side sessions (opaque session id in Redis or a database)
+
+- **For:** Revocation is immediate, permission changes apply on the next request, the cookie is small, and there is no key management.
+- **Against:** Every request needs a session lookup. In a database-per-service design that means either each service calls auth-service, or a shared session store becomes a hot dependency that every service shares. It is also awkward for non-browser clients, and it does not fit the zero-trust rule of verifying at each service without a network call.
+- **Verdict:** Rejected. It trades the main weakness of JWTs (slow revocation) for a coupling the architecture is built to avoid.
+
+### Refresh state in Redis instead of Postgres rows
+
+- **Option:** a signed refresh JWT plus one expiring Redis key per session (`session:{familyId}`) holding the current and previous `jti`, instead of one hashed row per token.
+- **For:** No growing table and no cleanup job. Sessions expire on their own.
+- **Against:** Redis lands on the refresh path, and losing the key logs the user out. The token is a less common shape and exposes readable claims. A row-per-token table needs only Postgres, which auth-service already requires.
+- **Verdict:** Not chosen for now. The behavior is the same, so it can replace the table later without changing the API.
+
+### Hosted provider (Auth0, Clerk)
+
+- **For:** MFA, social login, breach detection and bot protection come ready-made. Far less security code to write and maintain. Faster to ship.
+- **Against:** Cost per monthly active user, and vendor lock-in. Custom claims such as `tenantId` and editable permission sets need provider hooks or a sync job. User data would live outside our Postgres, which conflicts with auth-service owning users. It would also remove the auth work this demo project exists to practice.
+- **Verdict:** Rejected for now. Revisit if MFA, enterprise SSO or social login become requirements, or if the team no longer wants to run auth.
+
+## Weak points of this design
+
+| # | Weak point | Why it matters | Mitigation |
+|---|---|---|---|
+| 1 | **Revocation lag** | A disabled user, a demoted role or a removed permission keeps working until the access token expires (up to 10 minutes). | Accepted. The OpenAPI spec already states it. Optional later: a Redis deny-list keyed by `sub`, checked at the gateway. |
+| 2 | **False positives in reuse detection** | Two tabs refreshing at the same moment, or a retry after a lost response, replay a rotated token. The family is revoked and the user is logged out everywhere. | Single in-flight refresh per tab, coordinated across tabs with Web Locks, plus the 10-second grace window described above. A real replay outside the window still revokes the family. |
+| 3 | **XSS** | `httpOnly` hides the refresh token, but injected script can still call the refresh route handler and read the in-memory access token while the page is open. | Strict CSP, no `dangerouslySetInnerHTML`, short access-token life. |
+| 4 | **CSRF on the refresh route handler** | The cookie is sent automatically. `SameSite` helps but is not a complete defense. | Check the `Origin` header, accept only `POST` with a JSON content type, and keep the cookie path narrow. |
+| 5 | **Access token lost on reload** | Every full page load needs a refresh round trip, which adds latency and can flash a logged-out screen. | Accepted. Render a loading state until the first refresh settles. |
+| 6 | **Auth-service on the refresh path** | Each refresh is a database write. If auth-service is down, users are signed out after at most 10 minutes. | Index on the token hash, run several replicas, and clean up expired rows with a scheduled job. |
+| 7 | **Key management** | The private key can forge any role. A verifier that caches JWKS for too long rejects tokens from a new key. A leaked key stays dangerous until it is rotated out. | Keep the key in Secrets Manager, write a rotation and emergency-rotation runbook, cap the JWKS cache lifetime, and refetch on unknown `kid`. |
+| 8 | **Token size** | `permissions[]` is sent on every request and grows with the role's permission list. | Cap the permission count, or move to role-only claims plus a lookup if tokens get large. |
+| 9 | **Coupling to Next.js server code** | The cookie flow depends on route handlers in both apps. A future mobile client cannot use cookies and would need its own token storage. | Accepted. Keep the auth API itself client-neutral, as it is today. |
+| 10 | **Two apps, two cookies** | A mistake in cookie names or domains could let a customer session reach the console. | Separate cookie names, `Strict` on the console, and an authorization check in the console on every call regardless of the cookie. |
+| 11 | **We own the whole auth surface** | Credential stuffing, account enumeration, password reset abuse and OTP abuse are our problem. There is no MFA. | Rate limiting, generic login errors and the other rules in `.claude/rules/security.md`. MFA stays out of scope. |
+| 12 | **Token family table growth** | Every refresh adds a row, and old rows pile up. | Keep rows until `expiresAt` plus a retention period, then delete them in batches. The 30-day absolute cap bounds how long any family can live. |
+
+## Follow-ups
+
+- Update `auth-service.openapi.yaml`: add the `auth_time` claim to the Tokens section, a `reauthentication-required` problem type, and the idle and absolute session limits.
+- Add the permission list for "sensitive actions" to the permission catalogue.
+- Build the route handlers when `web` and `console` are bootstrapped.
+- Record JWKS caching and key storage in ADR-0023 (deployment and secrets).
+- Write ADR-0014 for guest identity.
