@@ -17,9 +17,18 @@ info:
 
     ## Tokens
     * **Access token** - JWT, 10 minutes, EdDSA/RS256. Public keys at
-      `/.well-known/jwks.json`. Claims: `sub`, `role`, `permissions[]`, `tenantId`.
+      `/.well-known/jwks.json`. Claims: `sub`, `role`, `permissions[]`, `tenantId`,
+      `auth_time` (Unix seconds of the last password login; a refresh keeps it
+      unchanged).
     * **Refresh token** - opaque, rotated on every use. Re-use of an already
-      rotated token revokes the whole token family (`refresh-token-reuse`).
+      rotated token revokes the whole token family (`refresh-token-reuse`), except
+      for a retry within 10 seconds of the rotation, which returns the same
+      successor. A token expires after 7 days idle and never outlives the session's
+      absolute limit of 30 days from login.
+    * **Recent login** - operations marked `x-recent-login: true` require
+      `auth_time` to be at most 5 minutes old. Otherwise they answer
+      `reauthentication-required`; signing in again via `/v1/auth/login` issues a
+      token with a fresh `auth_time`.
     * **Guest session token** - JWT with `sid` and no `sub`; binds seat holds to
       an anonymous browser session.
     * **Email proof token** - short-lived JWT proving control of an email address
@@ -38,7 +47,8 @@ info:
     |---------------------------|--------|---------|
     | `invalid-credentials`     | 401 | wrong email or password |
     | `invalid-refresh-token`   | 401 | refresh token unknown, expired, or revoked |
-    | `refresh-token-reuse`     | 401 | rotated token replayed; the session family was revoked |
+    | `refresh-token-reuse`     | 401 | rotated token replayed after the grace window; the session family was revoked |
+    | `reauthentication-required` | 401 | the operation needs a password login within the last 5 minutes |
     | `account-disabled`        | 403 | user status is `DISABLED` |
     | `email-already-registered`| 409 | an account with this email exists |
     | `invalid-otp`             | 422 | code wrong or expired |
@@ -220,7 +230,10 @@ paths:
       description: |
         Rotates the refresh token. The submitted token becomes invalid. Replaying
         an already rotated token revokes the entire token family and returns
-        `refresh-token-reuse`.
+        `refresh-token-reuse`, unless the replay arrives within 10 seconds of the
+        rotation (a retry or a second tab), in which case the existing successor is
+        returned. The new token keeps the original `auth_time` and cannot extend the
+        session past 30 days from login.
       security: []
       parameters:
         - $ref: './common.yaml#/components/parameters/RequestId'
@@ -537,6 +550,7 @@ paths:
         returned; the user receives an email to set one. Operator users require a
         `tenantId` (an operator id from the catalog service).
       x-permissions: ['user:manage']
+      x-recent-login: true
       requestBody:
         required: true
         content:
@@ -551,7 +565,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
-        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '401': { $ref: '#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '409':
           description: Email already registered (`email-already-registered`).
@@ -594,6 +608,7 @@ paths:
         until they expire (at most 10 minutes). Role changes take effect on the
         user's next token.
       x-permissions: ['user:manage']
+      x-recent-login: true
       parameters:
         - $ref: './common.yaml#/components/parameters/IfMatch'
       requestBody:
@@ -610,7 +625,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
-        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '401': { $ref: '#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '404': { $ref: './common.yaml#/components/responses/NotFound' }
         '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
@@ -661,6 +676,7 @@ paths:
       operationId: createRole
       summary: Create a custom role
       x-permissions: ['role:manage']
+      x-recent-login: true
       requestBody:
         required: true
         content:
@@ -675,7 +691,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Role' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
-        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '401': { $ref: '#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '409': { $ref: './common.yaml#/components/responses/Conflict' }
         '422':
@@ -714,6 +730,7 @@ paths:
         are replaced, not merged). Built-in roles may change permissions but not
         `key`. Users pick up changes on their next token (at most 10 minutes).
       x-permissions: ['role:manage']
+      x-recent-login: true
       parameters:
         - $ref: './common.yaml#/components/parameters/IfMatch'
       requestBody:
@@ -730,7 +747,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Role' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
-        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '401': { $ref: '#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '404': { $ref: './common.yaml#/components/responses/NotFound' }
         '409':
@@ -750,11 +767,12 @@ paths:
       operationId: deleteRole
       summary: Delete a custom role
       x-permissions: ['role:manage']
+      x-recent-login: true
       parameters:
         - $ref: './common.yaml#/components/parameters/IfMatch'
       responses:
         '204': { description: Role deleted. }
-        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '401': { $ref: '#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '404': { $ref: './common.yaml#/components/responses/NotFound' }
         '409':
@@ -769,6 +787,29 @@ components:
   securitySchemes:
     bearerAuth:
       $ref: './common.yaml#/components/securitySchemes/bearerAuth'
+
+  responses:
+    ReauthenticationRequired:
+      description: |
+        Missing, expired, or invalid access token, or the token's `auth_time` is
+        older than 5 minutes (`reauthentication-required`). Sign in again with
+        `POST /v1/auth/login` to get a token with a fresh `auth_time`.
+      headers:
+        X-Request-Id: { $ref: './common.yaml#/components/headers/XRequestId' }
+        WWW-Authenticate:
+          description: Bearer challenge (RFC 6750).
+          schema: { type: string }
+      content:
+        application/problem+json:
+          schema: { $ref: './common.yaml#/components/schemas/Problem' }
+          example:
+            type: https://api.ticketnest.example/problems/reauthentication-required
+            title: Recent login required
+            status: 401
+            detail: This action needs a login within the last 5 minutes.
+            code: REAUTHENTICATION_REQUIRED
+            instance: /v1/roles/7d1c1f1e-0b8e-4b7e-8a53-2f4f7c5b9a10
+            correlationId: 3f6f4c0e-6a58-4a6b-9a1e-2b3d9c1f0a77
 
   parameters:
     UserId:
@@ -803,8 +844,10 @@ components:
           examples: [600]
         refreshExpiresIn:
           type: integer
-          description: Refresh token lifetime in seconds.
-          examples: [2592000]
+          description: >-
+            Seconds until this refresh token expires (7 days idle), never beyond
+            the session's absolute limit of 30 days from login.
+          examples: [604800]
 
     GuestSession:
       type: object
