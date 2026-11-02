@@ -47,7 +47,7 @@ Next.js (App Router), Express 5, TypeScript (strict), PostgreSQL + Prisma, Redis
 
 **Permission-based RBAC.** Roles are named bundles of fine-grained permissions (e.g. `inventory:create`, `booking:read:any`, `refund:issue`, `refund:approve`, `policy:manage`). The admin can edit which permissions a role holds. A user holds one role; operator users additionally belong to exactly one **tenant (provider)** and every operator query is tenant-scoped.
 
-Indicative permission matrix (final list defined in the auth design doc):
+Indicative permission matrix (the final list is the [permission catalogue](./permissions.md)):
 
 | Capability | Guest | Customer | Operator | Support | Admin |
 |---|:-:|:-:|:-:|:-:|:-:|
