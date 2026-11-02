@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## State of the project
 
-TicketNest is a demo booking platform for movies, buses and trains, designed as microservices. Right now the repo is **design docs plus an empty scaffold**: every app and service under `apps/` and `services/` contains only a placeholder `src/index.ts`. The only real code is `packages/contracts` and `packages/config`. Do not assume a service, Dockerfile, database or broker exists; check first.
+TicketNest is a demo booking platform for movies, buses and trains, designed as microservices. Right now the repo is **design docs plus an empty scaffold**: every app and service under `apps/` and `services/` contains only a placeholder `src/index.ts`. The only real code is `packages/contracts`, `packages/config` and `packages/logger`. Do not assume a service, Dockerfile, database or broker exists; check first.
 
 The source of truth for what to build is in `docs/`:
 
@@ -67,6 +67,7 @@ Husky is installed by `pnpm install` (the root `prepare` script sets `core.hooks
 - **TypeScript is pinned to `~6.0.3`** because `typescript-eslint` does not support TypeScript 7 yet. Do not bump it until that changes.
 - **Shared packages are just-in-time:** `@ticketnest/contracts` exports TypeScript source (`./src/*.ts`), with no build step. Consumers must transpile it (Next `transpilePackages`; bundle with tsup/esbuild for services later). TS resolution is `Bundler`, `noEmit` everywhere, so there are no `.js` import extensions.
 - **Env config:** every service validates its environment with `loadConfig(schema)` from `@ticketnest/config` as the first line of `src/main.ts`. The schema is `baseConfigSchema.extend({...})` (base: `NODE_ENV`, `PORT`, `LOG_LEVEL`). It throws `ConfigError` listing every bad variable, never their values; empty strings count as unset.
+- **Logging:** services log through `createLogger({ serviceName, level, nodeEnvironment })` from `@ticketnest/logger`, built from the validated config (pino JSON, pretty only when `NODE_ENV=development`). Wrap each request or broker message in `runWithCorrelationId(id, work)` (id from the `X-Request-Id` header or the event's `correlationId`) and every line gets `correlationId`. Passwords, tokens, OTPs, secrets and `authorization`/`cookie` headers are redacted at the top level and one level down only, so never log objects nested deeper that may hold them.
 - **Strictness is high and enforced:** `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`, and type-aware `strictTypeChecked` ESLint (floating promises are errors). Use `import { type X }` for type-only imports.
 - **tsconfig presets** (`@ticketnest/tsconfig`): `node.json` for services, `library.json` for packages, `nextjs.json` for apps. `types` defaults to `[]`, so Node types come only from `node.json`. The ESLint `next` preset and Next TS plugin are deliberately deferred until a Next app is bootstrapped.
 - **Prettier ignores `docs/`** on purpose (hand-formatted tables, Mermaid, flow-style YAML). Don't run it over docs.

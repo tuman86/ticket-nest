@@ -14,4 +14,6 @@ catalog:
   globals: ^17.13.0
   vitest: ^5.0.5
   zod: ^4.6.7
+  pino: ^10.4.0
+  pino-pretty: ^13.2.0
   '@types/node': ^26.6.6
