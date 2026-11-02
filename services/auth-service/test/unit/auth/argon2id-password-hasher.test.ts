@@ -7,9 +7,9 @@ import {
   ARGON2ID_SALT_BYTES,
   ARGON2ID_TAG_BYTES,
   Argon2idPasswordHasher,
-} from './argon2id-password-hasher';
-import { assertArgon2Available, deriveArgon2idTag } from './argon2id-tag';
-import { formatArgon2idPhc, parseArgon2idPhc } from './phc-string';
+} from '@/auth/argon2id-password-hasher';
+import { assertArgon2Available, deriveArgon2idTag } from '@/auth/argon2id-tag';
+import { formatArgon2idPhc, parseArgon2idPhc } from '@/auth/phc-string';
 
 const PASSWORD = 'correct-horse-battery-staple';
 const SHAPE = /^\$argon2id\$v=19\$m=19456,t=2,p=1\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$/;

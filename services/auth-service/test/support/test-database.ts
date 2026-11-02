@@ -2,14 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { Pool } from 'pg';
 
-import { type PrismaClient } from '../generated/prisma/client';
-import { createPrismaClient } from '../repositories/create-prisma-client';
-import { PrismaRefreshTokenRepository } from '../repositories/prisma-refresh-token.repository';
-import { PrismaRoleRepository } from '../repositories/prisma-role.repository';
-import { PrismaUnitOfWork } from '../repositories/prisma-unit-of-work';
-import { PrismaUserRepository } from '../repositories/prisma-user.repository';
-import { type CreateRefreshTokenInput } from '../repositories/refresh-token.repository';
-import { type CreateUserInput } from '../repositories/user.repository';
+import { type PrismaClient } from '@/generated/prisma/client';
+import { createPrismaClient } from '@/repositories/create-prisma-client';
+import { PrismaRefreshTokenRepository } from '@/repositories/prisma-refresh-token.repository';
+import { PrismaRoleRepository } from '@/repositories/prisma-role.repository';
+import { PrismaUnitOfWork } from '@/repositories/prisma-unit-of-work';
+import { PrismaUserRepository } from '@/repositories/prisma-user.repository';
+import { type CreateRefreshTokenInput } from '@/repositories/refresh-token.repository';
+import { type CreateUserInput } from '@/repositories/user.repository';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REFRESH_TTL_MS = 7 * DAY_MS;

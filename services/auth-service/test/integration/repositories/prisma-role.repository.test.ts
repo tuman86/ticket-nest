@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
-import { createTestDatabase, type TestDatabase } from '../test-support/test-database';
+import { createTestDatabase, type TestDatabase } from '../../support/test-database';
 
 let database: TestDatabase;
 

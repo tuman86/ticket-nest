@@ -1,7 +1,7 @@
 import { createLogger } from '@ticketnest/logger';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { type ClosableServer, createShutdown, type ShutdownResource } from './shutdown';
+import { type ClosableServer, createShutdown, type ShutdownResource } from '@/shutdown';
 
 const TIMEOUT_MS = 5_000;
 

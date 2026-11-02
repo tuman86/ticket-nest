@@ -1,7 +1,7 @@
 import { ConfigError, loadConfig } from '@ticketnest/config';
 import { describe, expect, it } from 'vitest';
 
-import { authConfigSchema } from './config';
+import { authConfigSchema } from '@/config';
 
 const VALID_ENVIRONMENT = {
   PORT: '4001',

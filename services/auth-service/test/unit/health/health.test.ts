@@ -1,8 +1,8 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 
-import { createTestApp } from '../test-support/create-test-app';
-import { type DependencyCheck } from './dependency-check';
+import { createTestApp } from '../../support/create-test-app';
+import { type DependencyCheck } from '@/health/dependency-check';
 
 const SECRET_DRIVER_MESSAGE = 'password authentication failed for user "auth_service" at 10.0.0.5';
 

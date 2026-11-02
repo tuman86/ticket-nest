@@ -1,7 +1,7 @@
 import { createLogger, type Logger } from '@ticketnest/logger';
 import { type Express, type Router } from 'express';
 
-import { createApp, type AppDependencies } from '../app';
+import { createApp, type AppDependencies } from '@/app';
 
 export type LogLine = Record<string, unknown>;
 

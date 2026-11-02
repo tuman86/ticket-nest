@@ -5,7 +5,7 @@ import {
   formatArgon2idPhc,
   parseArgon2idPhc,
   type Argon2idPhc,
-} from './phc-string';
+} from '@/auth/phc-string';
 
 const SALT = Buffer.alloc(16, 7);
 const TAG = Buffer.alloc(32, 9);

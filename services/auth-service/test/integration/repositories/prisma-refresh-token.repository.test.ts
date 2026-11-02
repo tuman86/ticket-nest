@@ -2,13 +2,13 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
-import { type RefreshTokenRecord } from './refresh-token.repository';
+import { type RefreshTokenRecord } from '@/repositories/refresh-token.repository';
 import {
   buildRefreshTokenInput,
   buildUserInput,
   createTestDatabase,
   type TestDatabase,
-} from '../test-support/test-database';
+} from '../../support/test-database';
 
 const HOUR_MS = 60 * 60 * 1000;
 const BATCH_LIMIT = 2;

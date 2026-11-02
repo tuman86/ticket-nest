@@ -1,9 +1,9 @@
 import { UserResponse } from '@ticketnest/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { type UserRecord } from '../repositories/user.repository';
+import { type UserRecord } from '@/repositories/user.repository';
 
-import { toUserResponse } from './to-user-response';
+import { toUserResponse } from '@/users/to-user-response';
 
 const record: UserRecord = {
   id: '4b0d2f0e-8f0c-4d0e-9a6f-0c2f6a5d1e11',

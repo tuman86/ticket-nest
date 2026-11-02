@@ -4,7 +4,7 @@ import { Router } from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 
-import { createTestApp } from '../test-support/create-test-app';
+import { createTestApp } from '../../support/create-test-app';
 
 const ALLOWED_ORIGIN = 'https://app.ticketnest.example';
 

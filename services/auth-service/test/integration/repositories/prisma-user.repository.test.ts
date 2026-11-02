@@ -2,12 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
-import { EmailAlreadyRegisteredError } from '../users/email-already-registered.error';
-import {
-  buildUserInput,
-  createTestDatabase,
-  type TestDatabase,
-} from '../test-support/test-database';
+import { EmailAlreadyRegisteredError } from '@/users/email-already-registered.error';
+import { buildUserInput, createTestDatabase, type TestDatabase } from '../../support/test-database';
 
 const BUILT_IN_ROLE_KEYS = ['ADMIN', 'CUSTOMER', 'OPERATOR', 'SUPPORT_AGENT'];
 const TIMESTAMP_RESOLUTION_WAIT_MS = 10;

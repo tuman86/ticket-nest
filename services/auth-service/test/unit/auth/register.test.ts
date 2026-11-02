@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createRegisterTestApp,
   type RegisterTestApp,
-} from '../test-support/create-register-test-app';
-import { EmailAlreadyRegisteredError } from '../users/email-already-registered.error';
+} from '../../support/create-register-test-app';
+import { EmailAlreadyRegisteredError } from '@/users/email-already-registered.error';
 
 const REGISTER_PATH = '/v1/auth/register';
 const PROBLEM_BASE = 'https://api.ticketnest.example/problems/';

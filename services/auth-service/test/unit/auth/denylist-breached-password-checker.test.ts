@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DenylistBreachedPasswordChecker } from './denylist-breached-password-checker';
+import { DenylistBreachedPasswordChecker } from '@/auth/denylist-breached-password-checker';
 
 describe('DenylistBreachedPasswordChecker', () => {
   const checker = new DenylistBreachedPasswordChecker();

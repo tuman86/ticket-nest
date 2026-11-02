@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
-import { type RoleRecord, type RoleRepository } from '../repositories/role.repository';
-import { type Transaction, type UnitOfWork } from '../repositories/transaction';
+import { type RoleRecord, type RoleRepository } from '@/repositories/role.repository';
+import { type Transaction, type UnitOfWork } from '@/repositories/transaction';
 import {
   type CreateUserInput,
   type UserRecord,
   type UserRepository,
   type UserStatus,
-} from '../repositories/user.repository';
-import { EmailAlreadyRegisteredError } from '../users/email-already-registered.error';
+} from '@/repositories/user.repository';
+import { EmailAlreadyRegisteredError } from '@/users/email-already-registered.error';
 
 const FAKE_TRANSACTION: Transaction = { isTransaction: true };
 

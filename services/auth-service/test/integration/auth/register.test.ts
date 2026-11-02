@@ -1,14 +1,14 @@
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
-import { PrismaUnitOfWork } from '../repositories/prisma-unit-of-work';
-import { createTestApp } from '../test-support/create-test-app';
-import { createTestDatabase, type TestDatabase } from '../test-support/test-database';
+import { PrismaUnitOfWork } from '@/repositories/prisma-unit-of-work';
+import { createTestApp } from '../../support/create-test-app';
+import { createTestDatabase, type TestDatabase } from '../../support/test-database';
 
-import { Argon2idPasswordHasher } from './argon2id-password-hasher';
-import { createAuthRouter } from './auth.router';
-import { DenylistBreachedPasswordChecker } from './denylist-breached-password-checker';
-import { RegisterService } from './register.service';
+import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
+import { createAuthRouter } from '@/auth/auth.router';
+import { DenylistBreachedPasswordChecker } from '@/auth/denylist-breached-password-checker';
+import { RegisterService } from '@/auth/register.service';
 
 const REGISTER_PATH = '/v1/auth/register';
 const PASSWORD = 'correct-horse-battery';

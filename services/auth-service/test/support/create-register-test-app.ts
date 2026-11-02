@@ -1,9 +1,9 @@
 import { vi, type MockInstance } from 'vitest';
 
-import { Argon2idPasswordHasher } from '../auth/argon2id-password-hasher';
-import { createAuthRouter } from '../auth/auth.router';
-import { DenylistBreachedPasswordChecker } from '../auth/denylist-breached-password-checker';
-import { RegisterService } from '../auth/register.service';
+import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
+import { createAuthRouter } from '@/auth/auth.router';
+import { DenylistBreachedPasswordChecker } from '@/auth/denylist-breached-password-checker';
+import { RegisterService } from '@/auth/register.service';
 
 import { createTestApp, type TestApp } from './create-test-app';
 import {
