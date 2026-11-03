@@ -30,8 +30,12 @@ export function parseVerificationKeys(document: unknown): ParsedVerificationKeys
   const keys = new Map<string, KeyObject>();
   for (const candidate of parsedDocument.data.keys) {
     const jwk = Jwk.safeParse(candidate);
-    if (jwk.success && !keys.has(jwk.data.kid)) {
-      keys.set(jwk.data.kid, importPublicKey(jwk.data));
+    if (!jwk.success || keys.has(jwk.data.kid)) {
+      continue;
+    }
+    const publicKey = importPublicKey(jwk.data);
+    if (publicKey !== undefined) {
+      keys.set(jwk.data.kid, publicKey);
     }
   }
   if (keys.size === 0) {
@@ -41,9 +45,18 @@ export function parseVerificationKeys(document: unknown): ParsedVerificationKeys
 }
 
 /**
+ * Imports one key that already passed the `Jwk` contract. The contract only checks that `x` is a
+ * non-empty string, so the import is what proves it is a real Ed25519 public key. A key that fails
+ * it is skipped instead of failing the whole set.
+ *
  * @param jwk - A key that passed the `Jwk` contract.
- * @returns The Ed25519 public key. Only the public members are passed to the importer.
+ * @returns The Ed25519 public key (only the public members are passed to the importer), or
+ * `undefined` when `x` is not a valid Ed25519 public key.
  */
-function importPublicKey(jwk: Jwk): KeyObject {
-  return createPublicKey({ key: { kty: jwk.kty, crv: jwk.crv, x: jwk.x }, format: 'jwk' });
+function importPublicKey(jwk: Jwk): KeyObject | undefined {
+  try {
+    return createPublicKey({ key: { kty: jwk.kty, crv: jwk.crv, x: jwk.x }, format: 'jwk' });
+  } catch {
+    return undefined;
+  }
 }

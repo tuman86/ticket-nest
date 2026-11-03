@@ -268,6 +268,42 @@ describe('JwksKeyResolver', () => {
       await expect(resolver.resolveKey('rsa-key')).resolves.toBeUndefined();
     });
 
+    it('skips a key whose public part is not a valid Ed25519 key and keeps the rest', async () => {
+      fetchKeySet.mockResolvedValue({
+        status: 'modified',
+        document: {
+          keys: [{ ...toJwk(KEY_B, publicKeyB), x: 'abc' }, toJwk(KEY_A, publicKeyA)],
+        },
+        etag: null,
+      });
+
+      await expect(resolver.resolveKey(KEY_A)).resolves.toBeDefined();
+      await expect(resolver.resolveKey(KEY_B)).resolves.toBeUndefined();
+    });
+
+    it('counts a key set whose only key is not a valid Ed25519 key as a failed fetch', async () => {
+      fetchKeySet.mockResolvedValue({
+        status: 'modified',
+        document: { keys: [{ ...toJwk(KEY_A, publicKeyA), x: 'abc' }] },
+        etag: null,
+      });
+
+      await expect(resolver.resolveKey(KEY_A)).rejects.toBeInstanceOf(KeySetUnavailableError);
+    });
+
+    it('keeps the previous keys when a refetch brings a key set with one bad key and no other', async () => {
+      fetchKeySet.mockResolvedValueOnce(modified([[KEY_A, publicKeyA]], '"v1"'));
+      await resolver.resolveKey(KEY_A);
+      clock.advance(JWKS_CACHE_TTL_MS);
+      fetchKeySet.mockResolvedValueOnce({
+        status: 'modified',
+        document: { keys: [{ ...toJwk(KEY_B, publicKeyB), x: 'abc' }] },
+        etag: '"v2"',
+      });
+
+      await expect(resolver.resolveKey(KEY_A)).resolves.toBeDefined();
+    });
+
     it('refuses a key that carries a private member', async () => {
       fetchKeySet.mockResolvedValue({
         status: 'modified',

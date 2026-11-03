@@ -1,6 +1,5 @@
 import { randomBytes, type KeyObject } from 'node:crypto';
 
-import { JwtAccessTokenVerifier, StaticKeyResolver } from '@ticketnest/auth-middleware';
 import { createAuthenticateMiddleware } from '@ticketnest/auth-middleware/express';
 import { type Logger } from '@ticketnest/logger';
 import { vi, type MockInstance } from 'vitest';
@@ -8,6 +7,7 @@ import { vi, type MockInstance } from 'vitest';
 import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
 import { createAuthRateLimiters } from '@/auth/auth-rate-limiters';
 import { createAuthRouter } from '@/auth/auth.router';
+import { createLocalAccessTokenVerifier } from '@/auth/create-local-access-token-verifier';
 import { DenylistBreachedPasswordChecker } from '@/auth/denylist-breached-password-checker';
 import { EdDsaTokenService } from '@/auth/eddsa-token-service';
 import { JwksService } from '@/auth/jwks.service';
@@ -172,8 +172,8 @@ export async function createAuthTestApp(options: AuthTestAppOptions = {}): Promi
         }),
         createUsersRouter({
           authenticate: createAuthenticateMiddleware({
-            verifier: new JwtAccessTokenVerifier({
-              keyResolver: new StaticKeyResolver(keySet.verificationKeys),
+            verifier: createLocalAccessTokenVerifier({
+              verificationKeys: keySet.verificationKeys,
               issuer: TEST_ISSUER,
               audience: TEST_AUDIENCE,
               now: clock.now,
