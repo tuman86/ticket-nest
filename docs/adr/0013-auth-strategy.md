@@ -23,12 +23,15 @@ The design has to satisfy these constraints:
 - A JWT signed with **EdDSA** (RS256 is the fallback if a library or gateway lacks EdDSA support). Never a shared secret.
 - Lifetime: **10 minutes**.
 - Header: `kid`. Claims: `sub`, `role`, `permissions[]`, `tenantId` (operator users only), `auth_time` (when the user last entered their password), `iss`, `aud`, `iat`, `exp`, `jti` (random per token, so a deny-list keyed by token can be added later).
-- Signing key: auth-service reads one Ed25519 private key from the environment (`JWT_PRIVATE_KEY`, base64 of the PKCS#8 PEM, with `JWT_KEY_ID`, `JWT_ISSUER`, `JWT_AUDIENCE`). It is validated at startup and never committed. Publishing several keys for overlap rotation arrives with the JWKS endpoint.
+- Signing key: auth-service reads one Ed25519 private key from the environment (`JWT_PRIVATE_KEY`, base64 of the PKCS#8 PEM, with `JWT_ISSUER`, `JWT_AUDIENCE`). It is validated at startup and never committed. Only this key signs.
+- Key id: the `kid` of a key is its RFC 7638 JWK thumbprint, computed at startup, so it cannot mismatch its key and needs no configuration. (An earlier draft used a configured `JWT_KEY_ID`; it was removed. Tokens issued under the old id are refused for at most one access-token lifetime.)
+- Verify-only keys: `JWT_ADDITIONAL_PUBLIC_KEYS` (comma-separated base64 SPKI PEMs, at most 3, Ed25519 only) holds a retiring key or an upcoming key. They are published in the JWKS and verify tokens, never sign. A private key, a non-Ed25519 key or a duplicate stops startup.
 - Until the permission catalogue is seeded in auth-service's database, `permissions[]` is issued empty.
-- auth-service publishes the public keys at `/.well-known/jwks.json`. The gateway and every service verify with the public key only, cache the key set, and refetch it when they see an unknown `kid`. Only auth-service holds the private key.
-- Key rotation works by overlap: publish the new key, start signing with it, and keep the old public key in the set until the last token signed with it has expired.
+- auth-service publishes the public keys at `/.well-known/jwks.json` (unversioned, unauthenticated, `GET`/`HEAD` only, media type `application/jwk-set+json`). The gateway and every service verify with the public key only, cache the key set, and refetch it (with a cooldown) when they see an unknown `kid`. Only auth-service holds the private key. The endpoint is for platform-internal callers: it is not routed through the gateway for now.
+- The key set is built once at startup, never per request. It is served with a strong `ETag` (304 on `If-None-Match`) and `Cache-Control: public, max-age=300`.
+- Key rotation works by overlap: publish the new key, **wait at least the 300 s cache lifetime** (counted from the last replica), start signing with it, and keep the old public key in the set until the last token signed with it has expired (10 minutes). Steps and the emergency variant are in `docs/runbooks/jwt-key-rotation.md`.
 - Verifiers check `alg`, `iss`, `aud` and `exp` on every request and reject anything else.
-- Until the shared verifier package exists, auth-service verifies its own access tokens (`GET /v1/users/me`) with a local verifier: `EdDSA` is the only accepted algorithm, the `kid` must equal the configured key id, and `iss`, `aud` and `exp` are checked. Every failure answers one identical `401`.
+- Until the shared verifier package exists, auth-service verifies its own access tokens (`GET /v1/users/me`) with a local verifier: `EdDSA` is the only accepted algorithm, the `kid` must be one of the keys the JWKS publishes (the same key set, so they cannot disagree), and `iss`, `aud` and `exp` are checked. Every failure answers one identical `401`.
 
 ### Refresh token
 
@@ -171,7 +174,7 @@ Risky actions require a recent password login, instead of shortening every token
 | 4 | **CSRF on the refresh route handler** | The cookie is sent automatically. `SameSite` helps but is not a complete defense. | Check the `Origin` header, accept only `POST` with a JSON content type, and keep the cookie path narrow. |
 | 5 | **Access token lost on reload** | Every full page load needs a refresh round trip, which adds latency and can flash a logged-out screen. | Accepted. Render a loading state until the first refresh settles. |
 | 6 | **Auth-service on the refresh path** | Each refresh is a database write. If auth-service is down, users are signed out after at most 10 minutes. | Index on the token hash, run several replicas, and clean up expired rows with a scheduled job. |
-| 7 | **Key management** | The private key can forge any role. A verifier that caches JWKS for too long rejects tokens from a new key. A leaked key stays dangerous until it is rotated out. | Keep the key in Secrets Manager, write a rotation and emergency-rotation runbook, cap the JWKS cache lifetime, and refetch on unknown `kid`. |
+| 7 | **Key management** | The private key can forge any role. A verifier that caches JWKS for too long rejects tokens from a new key. A leaked key stays dangerous until it is rotated out. | Keep the key in Secrets Manager, the rotation and emergency-rotation runbook is `docs/runbooks/jwt-key-rotation.md`, the JWKS cache lifetime is capped at 300 s, and verifiers refetch on unknown `kid` with a cooldown. |
 | 8 | **Token size** | `permissions[]` is sent on every request and grows with the role's permission list. | Cap the permission count, or move to role-only claims plus a lookup if tokens get large. |
 | 9 | **Coupling to Next.js server code** | The cookie flow depends on route handlers in both apps. A future mobile client cannot use cookies and would need its own token storage. | Accepted. Keep the auth API itself client-neutral, as it is today. |
 | 10 | **Two apps, two cookies** | A mistake in cookie names or domains could let a customer session reach the console. | Separate cookie names, `Strict` on the console, and an authorization check in the console on every call regardless of the cookie. |
@@ -184,5 +187,5 @@ Risky actions require a recent password login, instead of shortening every token
 - Update `auth-service.openapi.yaml`: add the `auth_time` claim to the Tokens section, a `reauthentication-required` problem type, and the idle and absolute session limits.
 - Add the permission list for "sensitive actions" to the permission catalogue.
 - Build the route handlers when `web` and `console` are bootstrapped.
-- Record JWKS caching and key storage in ADR-0023 (deployment and secrets).
+- Record key storage in ADR-0023 (deployment and secrets). JWKS caching is decided above.
 - Write ADR-0014 for guest identity.
