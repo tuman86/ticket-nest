@@ -1,16 +1,21 @@
-import { randomBytes } from 'node:crypto';
+import { createPublicKey, randomBytes } from 'node:crypto';
 
 import { type Logger } from '@ticketnest/logger';
 import { vi, type MockInstance } from 'vitest';
 
 import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
 import { createAuthRouter } from '@/auth/auth.router';
+import { createAuthenticateMiddleware } from '@/auth/authenticate.middleware';
 import { DenylistBreachedPasswordChecker } from '@/auth/denylist-breached-password-checker';
+import { EdDsaAccessTokenVerifier } from '@/auth/eddsa-access-token-verifier';
 import { EdDsaTokenService } from '@/auth/eddsa-token-service';
 import { LoginService } from '@/auth/login.service';
+import { LogoutService } from '@/auth/logout.service';
 import { RefreshService } from '@/auth/refresh.service';
 import { RegisterService } from '@/auth/register.service';
 import { type UserRecord } from '@/repositories/user.repository';
+import { GetCurrentUserService } from '@/users/get-current-user.service';
+import { createUsersRouter } from '@/users/users.router';
 
 import { createTestApp, type TestApp } from './create-test-app';
 import {
@@ -66,7 +71,7 @@ export interface AuthTestAppOptions {
 }
 
 /**
- * Builds the real app and the real auth router (register, login, refresh) on in-memory
+ * Builds the real app and the real auth and users routers (register, login, refresh, logout, me) on in-memory
  * repositories, the real argon2id hasher and the real EdDSA token service, so the whole
  * controller -> service -> repository flow runs.
  *
@@ -125,6 +130,29 @@ export async function createAuthTestApp(options: AuthTestAppOptions = {}): Promi
             reuseGraceMs: options.reuseGraceMs ?? DEFAULT_TEST_REUSE_GRACE_MS,
             logger,
             now: clock.now,
+          }),
+          logoutService: new LogoutService({
+            refreshTokenRepository: refreshTokens,
+            unitOfWork,
+            logger,
+            now: clock.now,
+          }),
+        }),
+        createUsersRouter({
+          authenticate: createAuthenticateMiddleware({
+            verifier: new EdDsaAccessTokenVerifier({
+              publicKey: createPublicKey(keys.privateKey),
+              keyId: TEST_KEY_ID,
+              issuer: TEST_ISSUER,
+              audience: TEST_AUDIENCE,
+              now: clock.now,
+            }),
+            logger,
+          }),
+          getCurrentUserService: new GetCurrentUserService({
+            userRepository: users,
+            roleRepository: roles,
+            logger,
           }),
         }),
       ],

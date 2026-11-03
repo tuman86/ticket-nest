@@ -3,7 +3,11 @@ import { randomBytes, randomUUID, type KeyObject } from 'node:crypto';
 import { SignJWT } from 'jose';
 
 import { hashRefreshToken } from './refresh-token-hash';
-import { ACCESS_TOKEN_TTL_MS, REFRESH_TOKEN_BYTES } from './token-constants';
+import {
+  ACCESS_TOKEN_ALGORITHM,
+  ACCESS_TOKEN_TTL_MS,
+  REFRESH_TOKEN_BYTES,
+} from './token-constants';
 import {
   type AccessTokenClaims,
   type NewRefreshToken,
@@ -11,7 +15,6 @@ import {
   type TokenService,
 } from './token-service';
 
-const SIGNING_ALGORITHM = 'EdDSA';
 const MILLISECONDS_PER_SECOND = 1000;
 
 export interface EdDsaTokenServiceOptions {
@@ -59,7 +62,7 @@ export class EdDsaTokenService implements TokenService {
       auth_time: Math.floor(claims.authTime.getTime() / MILLISECONDS_PER_SECOND),
       ...(claims.tenantId === null ? {} : { tenantId: claims.tenantId }),
     })
-      .setProtectedHeader({ alg: SIGNING_ALGORITHM, kid: this.options.keyId })
+      .setProtectedHeader({ alg: ACCESS_TOKEN_ALGORITHM, kid: this.options.keyId })
       .setSubject(claims.userId)
       .setIssuer(this.options.issuer)
       .setAudience(this.options.audience)

@@ -63,7 +63,8 @@ export interface RefreshTokenRepository {
   markRotated(id: string, replacedById: string, rotatedAt: Date, tx: Transaction): Promise<boolean>;
 
   /**
-   * Revokes every still-active token of one login (used when a rotated token is replayed).
+   * Revokes every still-active token of one login (when a rotated token is replayed, and on
+   * logout). Tokens that already have a `revokedAt` keep it.
    *
    * @param familyId - The login's family id.
    * @param revokedAt - When the revocation happened.

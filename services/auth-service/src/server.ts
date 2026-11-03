@@ -1,9 +1,12 @@
+import { createPublicKey } from 'node:crypto';
+
 import { loadConfig } from '@ticketnest/config';
 import { createLogger } from '@ticketnest/logger';
 import { Redis } from 'ioredis';
 import { Pool } from 'pg';
 
 import { createApp } from './app';
+import { EdDsaAccessTokenVerifier } from './auth/eddsa-access-token-verifier';
 import { EdDsaTokenService } from './auth/eddsa-token-service';
 import { composeAuthRouter } from './compose-auth-router';
 import { authConfigSchema, SERVICE_NAME } from './config';
@@ -62,6 +65,13 @@ async function main(): Promise<void> {
     audience: config.JWT_AUDIENCE,
   });
 
+  const accessTokenVerifier = new EdDsaAccessTokenVerifier({
+    publicKey: createPublicKey(config.JWT_PRIVATE_KEY),
+    keyId: config.JWT_KEY_ID,
+    issuer: config.JWT_ISSUER,
+    audience: config.JWT_AUDIENCE,
+  });
+
   const app = createApp({
     logger,
     readinessChecks: [createPostgresCheck(pool), createRedisCheck(redis)],
@@ -69,14 +79,13 @@ async function main(): Promise<void> {
     corsOrigins: config.CORS_ORIGINS,
     jsonBodyLimit: config.JSON_BODY_LIMIT,
     isDebugInfoExposed: config.NODE_ENV === 'development',
-    routers: [
-      await composeAuthRouter({
-        pool,
-        logger,
-        tokenService,
-        refreshReuseGraceMs: config.REFRESH_REUSE_GRACE_MS,
-      }),
-    ],
+    routers: await composeAuthRouter({
+      pool,
+      logger,
+      tokenService,
+      accessTokenVerifier,
+      refreshReuseGraceMs: config.REFRESH_REUSE_GRACE_MS,
+    }),
   });
 
   const server = app.listen(config.PORT, () => {

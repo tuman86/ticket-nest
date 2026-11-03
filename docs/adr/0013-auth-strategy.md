@@ -28,6 +28,7 @@ The design has to satisfy these constraints:
 - auth-service publishes the public keys at `/.well-known/jwks.json`. The gateway and every service verify with the public key only, cache the key set, and refetch it when they see an unknown `kid`. Only auth-service holds the private key.
 - Key rotation works by overlap: publish the new key, start signing with it, and keep the old public key in the set until the last token signed with it has expired.
 - Verifiers check `alg`, `iss`, `aud` and `exp` on every request and reject anything else.
+- Until the shared verifier package exists, auth-service verifies its own access tokens (`GET /v1/users/me`) with a local verifier: `EdDSA` is the only accepted algorithm, the `kid` must equal the configured key id, and `iss`, `aud` and `exp` are checked. Every failure answers one identical `401`.
 
 ### Refresh token
 
@@ -40,7 +41,7 @@ The design has to satisfy these constraints:
 - **One failure for everything.** Unknown, expired, revoked, already used, past the session limit, and disabled user all answer the same `401 invalid-refresh-token` with the same detail. The reason, including reuse, goes to the server log only. There is no separate problem type for a replayed token: telling a caller that a token was replayed helps a thief more than the legitimate client, whose reaction is the same in every case.
 - **Fresh data on every refresh.** The user is re-read: a missing or `DISABLED` user is refused, and the role and `tenantId` of the new access token come from the database, so a role change applies at the next refresh. `auth_time` is copied from the session, never reset.
 - **Session limits:** each token expires after 7 days idle (`REFRESH_IDLE_TTL_MS`), and the family has a hard cap of 30 days from login (`REFRESH_ABSOLUTE_TTL_MS`). A refresh never extends a family past the cap, so a stolen but regularly used session cannot live forever.
-- Logout revokes the presented token. Password reset revokes all of the user's tokens. A password change revokes all of the user's other tokens. Disabling a user revokes their tokens.
+- Logout revokes the whole family of the presented token, so presenting an old, already rotated token still ends the session. It needs no access token, always answers `204` for a well-formed body, and logs the outcome (ids only). Password reset revokes all of the user's tokens. A password change revokes all of the user's other tokens. Disabling a user revokes their tokens.
 
 ### Where tokens live in the Next.js apps
 

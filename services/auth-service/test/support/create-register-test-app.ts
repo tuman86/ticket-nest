@@ -8,6 +8,7 @@ import { RegisterService } from '@/auth/register.service';
 import { createTestApp, type TestApp } from './create-test-app';
 import {
   createUnusedLoginService,
+  createUnusedLogoutService,
   createUnusedRefreshService,
 } from './create-unused-auth-services';
 import {
@@ -48,6 +49,7 @@ export function createRegisterTestApp(): RegisterTestApp {
           }),
           loginService: createUnusedLoginService(logger),
           refreshService: createUnusedRefreshService(logger),
+          logoutService: createUnusedLogoutService(logger),
         }),
       ],
     },

@@ -14,6 +14,7 @@ import { RefreshService } from '@/auth/refresh.service';
 import { RegisterService } from '@/auth/register.service';
 
 import { createTestApp, type TestApp } from '../../support/create-test-app';
+import { createUnusedLogoutService } from '../../support/create-unused-auth-services';
 import { TestClock } from '../../support/test-clock';
 import { createTestDatabase, type TestDatabase } from '../../support/test-database';
 import {
@@ -92,6 +93,7 @@ beforeAll(async () => {
             logger,
             now: clock.now,
           }),
+          logoutService: createUnusedLogoutService(logger),
         }),
       ],
     },

@@ -12,7 +12,10 @@ import { LoginService } from '@/auth/login.service';
 import { parseArgon2idPhc } from '@/auth/phc-string';
 import { RegisterService } from '@/auth/register.service';
 
-import { createUnusedRefreshService } from '../../support/create-unused-auth-services';
+import {
+  createUnusedLogoutService,
+  createUnusedRefreshService,
+} from '../../support/create-unused-auth-services';
 import { createTestApp, type TestApp } from '../../support/create-test-app';
 import {
   generateTestSigningKeys,
@@ -73,6 +76,7 @@ beforeAll(async () => {
             logger,
           }),
           refreshService: createUnusedRefreshService(logger),
+          logoutService: createUnusedLogoutService(logger),
         }),
       ],
     },
