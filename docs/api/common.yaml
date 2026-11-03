@@ -322,6 +322,25 @@ components:
             instance: /v1/example
             correlationId: 3f6f4c0e-6a58-4a6b-9a1e-2b3d9c1f0a77
 
+    MethodNotAllowed:
+      description: The path exists but not for this HTTP method. `Allow` lists the methods that work.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        Allow:
+          description: Methods the path accepts.
+          schema: { type: string, examples: ['GET, HEAD'] }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://api.ticketnest.example/problems/method-not-allowed
+            title: Method not allowed
+            status: 405
+            detail: This path does not accept POST.
+            code: METHOD_NOT_ALLOWED
+            instance: /.well-known/jwks.json
+            correlationId: 3f6f4c0e-6a58-4a6b-9a1e-2b3d9c1f0a77
+
     PreconditionFailed:
       description: '`If-Match` did not match the current ETag; re-fetch and retry.'
       headers:
