@@ -24,9 +24,26 @@ export const CUSTOMER_ROLE: RoleRecord = {
   name: 'Customer',
 };
 
+/** A fake that can capture its state and give back a function that restores it. */
+export interface Snapshottable {
+  /** @returns A function that puts the state back as it was when this was called. */
+  takeSnapshot(): () => void;
+}
+
 /** `UserRepository` in memory. Like the database, it refuses a second user with the same email. */
-export class InMemoryUserRepository implements UserRepository {
+export class InMemoryUserRepository implements UserRepository, Snapshottable {
   private readonly users = new Map<string, UserRecord>();
+
+  /** @inheritdoc */
+  takeSnapshot(): () => void {
+    const copy = new Map(this.users);
+    return () => {
+      this.users.clear();
+      for (const [id, user] of copy) {
+        this.users.set(id, user);
+      }
+    };
+  }
 
   /** @returns Every stored user, oldest first. */
   all(): readonly UserRecord[] {
@@ -123,8 +140,19 @@ export class InMemoryRoleRepository implements RoleRepository {
 }
 
 /** `RefreshTokenRepository` in memory. Only `create` and the reads are used by login. */
-export class InMemoryRefreshTokenRepository implements RefreshTokenRepository {
+export class InMemoryRefreshTokenRepository implements RefreshTokenRepository, Snapshottable {
   private readonly tokens = new Map<string, RefreshTokenRecord>();
+
+  /** @inheritdoc */
+  takeSnapshot(): () => void {
+    const copy = new Map(this.tokens);
+    return () => {
+      this.tokens.clear();
+      for (const [id, token] of copy) {
+        this.tokens.set(id, token);
+      }
+    };
+  }
 
   /** @returns Every stored token, oldest first. */
   all(): readonly RefreshTokenRecord[] {
@@ -199,5 +227,29 @@ export class InlineUnitOfWork implements UnitOfWork {
   /** @inheritdoc */
   run<Result>(work: (tx: Transaction) => Promise<Result>): Promise<Result> {
     return work(FAKE_TRANSACTION);
+  }
+}
+
+/**
+ * `UnitOfWork` for in-memory fakes that undoes their changes when the work throws, like a real
+ * rollback. Needed to test paths that deliberately abort a transaction.
+ */
+export class RollbackUnitOfWork implements UnitOfWork {
+  /**
+   * @param participants - The fakes whose changes are rolled back.
+   */
+  constructor(private readonly participants: readonly Snapshottable[]) {}
+
+  /** @inheritdoc */
+  async run<Result>(work: (tx: Transaction) => Promise<Result>): Promise<Result> {
+    const restores = this.participants.map((participant) => participant.takeSnapshot());
+    try {
+      return await work(FAKE_TRANSACTION);
+    } catch (error) {
+      for (const restore of restores) {
+        restore();
+      }
+      throw error;
+    }
   }
 }

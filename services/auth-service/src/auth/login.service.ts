@@ -12,10 +12,8 @@ import { normalizeEmail } from '../users/normalize-email';
 
 import { InvalidCredentialsError } from './invalid-credentials.error';
 import { type PasswordHasher } from './password-hasher';
-import { REFRESH_IDLE_TTL_MS } from './token-constants';
-import { type SignedAccessToken, type TokenService } from './token-service';
-
-const MILLISECONDS_PER_SECOND = 1000;
+import { calculateRefreshExpiry, toTokenPair } from './token-pair';
+import { type TokenService } from './token-service';
 
 /** Why a login failed. Logged internally, never sent to the caller. */
 type LoginFailureReason = 'unknown_user' | 'bad_password' | 'disabled';
@@ -61,6 +59,7 @@ interface PersistSessionInput {
   readonly user: UserRecord;
   readonly input: LoginInput;
   readonly authTime: Date;
+  readonly refreshExpiresAt: Date;
   /** SHA-256 of the new refresh token, lower-case hex. */
   readonly refreshTokenHash: string;
   readonly storedPasswordHash: string;
@@ -115,10 +114,12 @@ export class LoginService {
       storedPasswordHash,
     );
 
+    const refreshExpiresAt = calculateRefreshExpiry(authTime, authTime);
     const familyId = await this.persistSession({
       user,
       input,
       authTime,
+      refreshExpiresAt,
       refreshTokenHash: refreshToken.hash,
       storedPasswordHash,
       upgradedPasswordHash,
@@ -126,7 +127,7 @@ export class LoginService {
 
     // Ids only: never the email, password, hash or either token.
     this.dependencies.logger.info({ userId: user.id, familyId }, 'user logged in');
-    return this.toTokenPair(accessToken, refreshToken.value);
+    return toTokenPair(accessToken, refreshToken.value, refreshExpiresAt, authTime);
   }
 
   /**
@@ -184,7 +185,7 @@ export class LoginService {
           familyId,
           tokenHash: session.refreshTokenHash,
           authTime: session.authTime,
-          expiresAt: new Date(session.authTime.getTime() + REFRESH_IDLE_TTL_MS),
+          expiresAt: session.refreshExpiresAt,
           userAgent: session.input.userAgent,
           ip: session.input.ip,
         },
@@ -218,20 +219,5 @@ export class LoginService {
   private fail(reason: LoginFailureReason): never {
     this.dependencies.logger.info({ reason }, 'login failed');
     throw new InvalidCredentialsError();
-  }
-
-  /**
-   * @param accessToken - The signed access token.
-   * @param refreshTokenValue - The opaque refresh token value.
-   * @returns The response body defined by the OpenAPI `TokenPair` schema.
-   */
-  private toTokenPair(accessToken: SignedAccessToken, refreshTokenValue: string): TokenPair {
-    return {
-      accessToken: accessToken.token,
-      refreshToken: refreshTokenValue,
-      tokenType: 'Bearer',
-      expiresIn: accessToken.expiresInSeconds,
-      refreshExpiresIn: REFRESH_IDLE_TTL_MS / MILLISECONDS_PER_SECOND,
-    };
   }
 }

@@ -1,6 +1,6 @@
 import { createPrivateKey, type KeyObject } from 'node:crypto';
 
-import { baseConfigSchema } from '@ticketnest/config';
+import { baseConfigSchema, refreshReuseGraceMsSchema } from '@ticketnest/config';
 import { z } from 'zod';
 
 export const SERVICE_NAME = 'auth-service';
@@ -61,6 +61,8 @@ export const authConfigSchema = baseConfigSchema.extend({
   JWT_ISSUER: z.string().min(1),
   /** The `aud` claim verifiers must require. */
   JWT_AUDIENCE: z.string().min(1),
+  /** A replay of a just-rotated refresh token within this long is a retry, not theft. */
+  REFRESH_REUSE_GRACE_MS: refreshReuseGraceMsSchema,
   CORS_ORIGINS: originListSchema,
   JSON_BODY_LIMIT: z.string().regex(BODY_LIMIT_PATTERN).default(DEFAULT_JSON_BODY_LIMIT),
   SHUTDOWN_TIMEOUT_MS: z.coerce

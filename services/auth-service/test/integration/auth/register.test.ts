@@ -3,7 +3,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 
 import { PrismaUnitOfWork } from '@/repositories/prisma-unit-of-work';
 import { createTestApp } from '../../support/create-test-app';
-import { createUnusedLoginService } from '../../support/create-unused-login-service';
+import {
+  createUnusedLoginService,
+  createUnusedRefreshService,
+} from '../../support/create-unused-auth-services';
 import { createTestDatabase, type TestDatabase } from '../../support/test-database';
 
 import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
@@ -34,6 +37,7 @@ beforeAll(() => {
             logger,
           }),
           loginService: createUnusedLoginService(logger),
+          refreshService: createUnusedRefreshService(logger),
         }),
       ],
     },

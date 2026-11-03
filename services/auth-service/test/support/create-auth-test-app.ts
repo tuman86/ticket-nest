@@ -1,12 +1,14 @@
 import { randomBytes } from 'node:crypto';
 
+import { type Logger } from '@ticketnest/logger';
 import { vi, type MockInstance } from 'vitest';
 
 import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
 import { createAuthRouter } from '@/auth/auth.router';
-import { EdDsaTokenService } from '@/auth/eddsa-token-service';
 import { DenylistBreachedPasswordChecker } from '@/auth/denylist-breached-password-checker';
+import { EdDsaTokenService } from '@/auth/eddsa-token-service';
 import { LoginService } from '@/auth/login.service';
+import { RefreshService } from '@/auth/refresh.service';
 import { RegisterService } from '@/auth/register.service';
 import { type UserRecord } from '@/repositories/user.repository';
 
@@ -16,8 +18,9 @@ import {
   InMemoryRefreshTokenRepository,
   InMemoryRoleRepository,
   InMemoryUserRepository,
-  InlineUnitOfWork,
+  RollbackUnitOfWork,
 } from './in-memory-repositories';
+import { TestClock } from './test-clock';
 import {
   generateTestSigningKeys,
   TEST_AUDIENCE,
@@ -26,7 +29,9 @@ import {
   type TestSigningKeys,
 } from './test-signing-keys';
 
-export interface LoginTestApp extends TestApp {
+export const DEFAULT_TEST_REUSE_GRACE_MS = 10_000;
+
+export interface AuthTestApp extends TestApp {
   readonly users: InMemoryUserRepository;
   readonly refreshTokens: InMemoryRefreshTokenRepository;
   /** The hasher the login service uses, with `verify` spied on. */
@@ -34,6 +39,8 @@ export interface LoginTestApp extends TestApp {
   readonly verifySpy: MockInstance<Argon2idPasswordHasher['verify']>;
   readonly dummyPasswordHash: string;
   readonly keys: TestSigningKeys;
+  /** Drives the time every service sees. Call `advance` to jump forward. */
+  readonly clock: TestClock;
   /**
    * Stores a user whose hash was made with the default (older) parameters.
    *
@@ -51,55 +58,73 @@ export interface AddUserInput {
   readonly passwordHash?: string | null;
 }
 
-export interface LoginTestAppOptions {
+export interface AuthTestAppOptions {
   /** The hasher the service uses. Pass a stronger one to make stored hashes look old. */
   readonly hasher?: Argon2idPasswordHasher;
+  /** Grace window of the refresh service. Defaults to 10 seconds. */
+  readonly reuseGraceMs?: number;
 }
 
 /**
- * Builds the real app and the real login router on in-memory repositories, the real argon2id
- * hasher and the real EdDSA token service, so the whole controller -> service -> repository
- * flow runs.
+ * Builds the real app and the real auth router (register, login, refresh) on in-memory
+ * repositories, the real argon2id hasher and the real EdDSA token service, so the whole
+ * controller -> service -> repository flow runs.
  *
  * @param options - Optional overrides.
  * @returns The app plus handles for assertions.
  */
-export async function createLoginTestApp(options: LoginTestAppOptions = {}): Promise<LoginTestApp> {
+export async function createAuthTestApp(options: AuthTestAppOptions = {}): Promise<AuthTestApp> {
   const users = new InMemoryUserRepository();
   const refreshTokens = new InMemoryRefreshTokenRepository();
+  const roles = new InMemoryRoleRepository();
+  const unitOfWork = new RollbackUnitOfWork([users, refreshTokens]);
+  const clock = new TestClock();
   const hasher = options.hasher ?? new Argon2idPasswordHasher();
   const verifySpy = vi.spyOn(hasher, 'verify');
   const legacyHasher = new Argon2idPasswordHasher();
   const keys = generateTestSigningKeys();
   const dummyPasswordHash = await hasher.hash(randomBytes(32).toString('base64'));
+  const tokenService = new EdDsaTokenService({
+    privateKey: keys.privateKey,
+    keyId: TEST_KEY_ID,
+    issuer: TEST_ISSUER,
+    audience: TEST_AUDIENCE,
+    now: clock.now,
+  });
 
   const testApp = createTestApp(
     {},
     {
-      buildRouters: (logger) => [
+      buildRouters: (logger: Logger) => [
         createAuthRouter({
           registerService: new RegisterService({
             userRepository: users,
-            roleRepository: new InMemoryRoleRepository(),
-            unitOfWork: new InlineUnitOfWork(),
+            roleRepository: roles,
+            unitOfWork,
             passwordHasher: hasher,
             breachedPasswordChecker: new DenylistBreachedPasswordChecker(),
             logger,
           }),
           loginService: new LoginService({
             userRepository: users,
-            roleRepository: new InMemoryRoleRepository(),
+            roleRepository: roles,
             refreshTokenRepository: refreshTokens,
-            unitOfWork: new InlineUnitOfWork(),
+            unitOfWork,
             passwordHasher: hasher,
-            tokenService: new EdDsaTokenService({
-              privateKey: keys.privateKey,
-              keyId: TEST_KEY_ID,
-              issuer: TEST_ISSUER,
-              audience: TEST_AUDIENCE,
-            }),
+            tokenService,
             dummyPasswordHash,
             logger,
+            now: clock.now,
+          }),
+          refreshService: new RefreshService({
+            userRepository: users,
+            roleRepository: roles,
+            refreshTokenRepository: refreshTokens,
+            unitOfWork,
+            tokenService,
+            reuseGraceMs: options.reuseGraceMs ?? DEFAULT_TEST_REUSE_GRACE_MS,
+            logger,
+            now: clock.now,
           }),
         }),
       ],
@@ -114,6 +139,7 @@ export async function createLoginTestApp(options: LoginTestAppOptions = {}): Pro
     verifySpy,
     dummyPasswordHash,
     keys,
+    clock,
     async addUser(input) {
       const user = await users.create({
         email: input.email,

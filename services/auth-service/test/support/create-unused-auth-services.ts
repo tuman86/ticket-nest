@@ -3,6 +3,7 @@ import { type Logger } from '@ticketnest/logger';
 import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
 import { EdDsaTokenService } from '@/auth/eddsa-token-service';
 import { LoginService } from '@/auth/login.service';
+import { RefreshService } from '@/auth/refresh.service';
 
 import {
   InMemoryRefreshTokenRepository,
@@ -16,6 +17,30 @@ import {
   TEST_ISSUER,
   TEST_KEY_ID,
 } from './test-signing-keys';
+
+/**
+ * Builds a `RefreshService` for tests of other routes, where the auth router needs one but no
+ * request ever reaches it. It runs on empty in-memory repositories, so a refresh would fail.
+ *
+ * @param logger - The test logger.
+ * @returns A refresh service that is wired but unused.
+ */
+export function createUnusedRefreshService(logger: Logger): RefreshService {
+  return new RefreshService({
+    userRepository: new InMemoryUserRepository(),
+    roleRepository: new InMemoryRoleRepository(),
+    refreshTokenRepository: new InMemoryRefreshTokenRepository(),
+    unitOfWork: new InlineUnitOfWork(),
+    tokenService: new EdDsaTokenService({
+      privateKey: generateTestSigningKeys().privateKey,
+      keyId: TEST_KEY_ID,
+      issuer: TEST_ISSUER,
+      audience: TEST_AUDIENCE,
+    }),
+    reuseGraceMs: 10_000,
+    logger,
+  });
+}
 
 /**
  * Builds a `LoginService` for tests of other routes, where the auth router needs one but no

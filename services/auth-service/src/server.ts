@@ -69,7 +69,14 @@ async function main(): Promise<void> {
     corsOrigins: config.CORS_ORIGINS,
     jsonBodyLimit: config.JSON_BODY_LIMIT,
     isDebugInfoExposed: config.NODE_ENV === 'development',
-    routers: [await composeAuthRouter(pool, logger, tokenService)],
+    routers: [
+      await composeAuthRouter({
+        pool,
+        logger,
+        tokenService,
+        refreshReuseGraceMs: config.REFRESH_REUSE_GRACE_MS,
+      }),
+    ],
   });
 
   const server = app.listen(config.PORT, () => {
