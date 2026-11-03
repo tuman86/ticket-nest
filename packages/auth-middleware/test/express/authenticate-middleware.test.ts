@@ -41,13 +41,10 @@ function buildApp(verify: AccessTokenVerifier['verify']): {
   const logger = createLogger({ serviceName: 'test', level: 'silent', nodeEnvironment: 'test' });
   const info = vi.spyOn(logger, 'info');
   const app = express();
-  app.get(
-    '/protected',
-    createAuthenticateMiddleware({ verifier: { verify }, logger }),
-    (_, res) => {
-      res.json({ userId: getAuthenticatedPrincipal(res).userId });
-    },
-  );
+  const authenticate = createAuthenticateMiddleware({ verifier: { verify }, logger });
+  app.get('/protected', authenticate, (_, res) => {
+    res.json({ userId: getAuthenticatedPrincipal(res).userId });
+  });
   app.get('/forgot-middleware', (_, res: Response) => {
     res.json({ userId: getAuthenticatedPrincipal(res).userId });
   });
