@@ -3,6 +3,7 @@ import { type Logger } from '@ticketnest/logger';
 import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
 import { EdDsaTokenService } from '@/auth/eddsa-token-service';
 import { LoginService } from '@/auth/login.service';
+import { LogoutService } from '@/auth/logout.service';
 import { RefreshService } from '@/auth/refresh.service';
 
 import {
@@ -63,6 +64,21 @@ export function createUnusedLoginService(logger: Logger): LoginService {
       audience: TEST_AUDIENCE,
     }),
     dummyPasswordHash: 'not-a-real-hash',
+    logger,
+  });
+}
+
+/**
+ * Builds a `LogoutService` for tests of other routes, where the auth router needs one but no
+ * request ever reaches it. It runs on empty in-memory repositories.
+ *
+ * @param logger - The test logger.
+ * @returns A logout service that is wired but unused.
+ */
+export function createUnusedLogoutService(logger: Logger): LogoutService {
+  return new LogoutService({
+    refreshTokenRepository: new InMemoryRefreshTokenRepository(),
+    unitOfWork: new InlineUnitOfWork(),
     logger,
   });
 }

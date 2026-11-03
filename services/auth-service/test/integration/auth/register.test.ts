@@ -5,6 +5,7 @@ import { PrismaUnitOfWork } from '@/repositories/prisma-unit-of-work';
 import { createTestApp } from '../../support/create-test-app';
 import {
   createUnusedLoginService,
+  createUnusedLogoutService,
   createUnusedRefreshService,
 } from '../../support/create-unused-auth-services';
 import { createTestDatabase, type TestDatabase } from '../../support/test-database';
@@ -38,6 +39,7 @@ beforeAll(() => {
           }),
           loginService: createUnusedLoginService(logger),
           refreshService: createUnusedRefreshService(logger),
+          logoutService: createUnusedLogoutService(logger),
         }),
       ],
     },

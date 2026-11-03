@@ -2,6 +2,8 @@ import { Router } from 'express';
 
 import { createLoginHandler } from './login.controller';
 import { type LoginService } from './login.service';
+import { createLogoutHandler } from './logout.controller';
+import { type LogoutService } from './logout.service';
 import { createRefreshHandler } from './refresh.controller';
 import { type RefreshService } from './refresh.service';
 import { createRegisterHandler } from './register.controller';
@@ -11,6 +13,7 @@ export interface AuthRouterDependencies {
   readonly registerService: RegisterService;
   readonly loginService: LoginService;
   readonly refreshService: RefreshService;
+  readonly logoutService: LogoutService;
 }
 
 /**
@@ -30,5 +33,9 @@ export function createAuthRouter(dependencies: AuthRouterDependencies): Router {
   // a hash of the presented token. Until it lands this route must not be exposed through the
   // gateway either.
   router.post('/v1/auth/refresh', createRefreshHandler(dependencies.refreshService));
+  // The logout rate limiter (feat/auth-rate-limit) plugs in here the same way, keyed by IP. Logout
+  // answers 204 whatever the token was, so it is no enumeration oracle, but it is a database
+  // write: it gets a limiter before it is exposed through the gateway.
+  router.post('/v1/auth/logout', createLogoutHandler(dependencies.logoutService));
   return router;
 }

@@ -1,6 +1,15 @@
 /** Access tokens live 10 minutes. Never issue a longer-lived one (`.claude/rules/security.md`). */
 export const ACCESS_TOKEN_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * The only algorithm access tokens are signed with and accepted under (ADR-0013). RS256 is a
+ * fallback the ADR allows, but no RSA key exists, so verifiers must not accept it.
+ */
+export const ACCESS_TOKEN_ALGORITHM = 'EdDSA';
+
+/** Longest `Authorization` header value read. Longer values are refused without parsing. */
+export const AUTHORIZATION_HEADER_MAX_LENGTH = 8192;
+
 /** A refresh token expires after 7 days without use. */
 export const REFRESH_IDLE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
