@@ -84,7 +84,7 @@ Risky actions require a recent password login, instead of shortening every token
 - **Constant work.** Exactly one argon2id verification runs in every case. When the email is unknown, or the user has no usable hash, it runs against a dummy hash made at startup with the current parameters. A disabled user's real hash is verified before the request is rejected. After the parameters are raised, an account that still has an old, cheaper hash verifies slightly faster than the dummy until its next successful login. This residual difference is accepted.
 - **Rehash.** After a successful login, a hash with any parameter below the current one is replaced in the same transaction as the new refresh token. The update is compare-and-set on the old hash, so a password changed while the login was running is never overwritten.
 - **Session.** Each login creates a new `familyId` and stores the SHA-256 of the refresh token with the user agent and IP. `auth_time` is the login time. The response carries `Cache-Control: no-store`.
-- **Rate limiting.** Login must be rate limited by IP and by email (`feat/auth-rate-limit`), as middleware before the handler. **The limiter must land before `/v1/auth/login` is exposed through the gateway.** Until then the route exists in auth-service only.
+- **Rate limiting.** Login is rate limited by IP and by email, as middleware before the handler (see "Rate limiting" below). The limiter has landed, so the route may be exposed through the gateway.
 - Failed logins log an internal reason (`unknown_user`, `bad_password`, `disabled`) and never the email or user id.
 
 ### Registration and password hashing
@@ -101,7 +101,7 @@ Risky actions require a recent password login, instead of shortening every token
 **Trade-off: registration may reveal that an email is taken.** The `409` lets a caller probe which emails have accounts. We accept this because the alternative (always answering `202` and emailing the owner "you already have an account") needs the email pipeline first and makes the sign-up form harder to use. The anti-enumeration rule therefore applies to login, refresh, password reset and OTP requests, and registration is the documented exception. In exchange:
 
 - Registration must be rate limited by IP and by email with the Redis-backed limiter, answering `429` with `Retry-After`.
-- **The limiter must land before `/v1/auth/register` is exposed through the gateway.** Until then the route exists in auth-service only.
+- The limiter has landed (see "Rate limiting" below), so the route may be exposed through the gateway.
 - The `409` path never logs the email.
 - If the limiter proves too weak, switch to the always-`202` flow. That is an API change and needs a new spec version.
 
@@ -121,6 +121,24 @@ Risky actions require a recent password login, instead of shortening every token
 - **A malformed or unsupported stored hash is a failed verification**, not a thrown error, so a damaged row can never turn into a `500` that tells an attacker something. Parameters read from a stored string are also bounded before use, so a tampered row cannot request huge memory.
 - **Runtime guard:** the hasher refuses to start if `crypto.argon2` is missing. The Dockerfile build stage checks the same Node binary that is copied into the runtime image, so an older Node cannot slip into production.
 - **Tests** cover a round trip, a wrong password, unique salts, malformed hashes and a reference vector (RFC 9106 test vector for argon2id), so a change in Node's implementation cannot silently change the output.
+
+### Rate limiting
+
+Register, login, refresh and logout are limited by a Redis-backed fixed-window limiter in auth-service (`src/rate-limit/`). The shape is controller (middleware) -> `RateLimitService` -> `RateLimiter` interface, with the Redis class named only in `server.ts`.
+
+| Endpoint | IP limit | Account limit | Window | If Redis is down |
+|---|---|---|---|---|
+| `POST /v1/auth/register` | 5 | 3 per email | 1 hour | fail closed (503) |
+| `POST /v1/auth/login` | 20 | 10 per email | 15 minutes | fail closed (503) |
+| `POST /v1/auth/refresh` | 60 | 20 per refresh token | 15 minutes | fail open (warning) |
+| `POST /v1/auth/logout` | 60 | none | 15 minutes | fail open (warning) |
+
+- **Fixed window.** One counter per key with a TTL equal to the window, incremented by one Lua script so replicas cannot race. A client can send up to twice the limit across a window boundary; at these limits that is acceptable for brute-force throttling. `Retry-After` is the counter's remaining TTL, rounded up. Every request counts, denied ones too, and a denial does not move the end of the window.
+- **Two independent counters.** The IP rule is checked first and checking stops at the first denial, so a blocked IP cannot use up a victim's email counter. A request with no usable email (a malformed body) is counted by IP only and then gets its normal 422. A request with no known IP shares one `unknown` bucket.
+- **Keys.** The IP is stored as is. The email (trimmed, lower-cased, like stored accounts) and the refresh token are stored as HMAC-SHA256 with a server-side secret (`RATE_LIMIT_KEY_PEPPER`, at least 32 characters), so Redis holds neither in plaintext and a dump cannot be matched against a list of emails. Logs name the policy only, never a key or identifier.
+- **Failure modes.** Register and login fail closed: they are the enumeration and credential-stuffing targets, and each login costs an argon2id verify. Refresh and logout fail open: they need a secret token anyway, and failing them closed would sign everyone out during a Redis blip. A limiter call that takes longer than 500 ms counts as down.
+- **Client IP.** `TRUST_PROXY_HOPS` (default 0) sets Express `trust proxy`. At 0 the socket address is used, so a client that reaches the service directly cannot choose its IP; set 1 once the gateway is in front. The gateway's own limits are separate and will be layered on top.
+- **Known limits.** An attacker can lock a victim's email out of login for up to 15 minutes by exceeding its counter; the per-email limit is generous enough to keep this short-lived. An IPv6 client with a /64 can rotate addresses, so the IPv6 counter should be keyed by /64 later. If the limiter proves too weak for registration, the always-`202` flow stays the fallback.
 
 ### Out of scope
 
@@ -180,7 +198,7 @@ Risky actions require a recent password login, instead of shortening every token
 | 10 | **Two apps, two cookies** | A mistake in cookie names or domains could let a customer session reach the console. | Separate cookie names, `Strict` on the console, and an authorization check in the console on every call regardless of the cookie. |
 | 11 | **We own the whole auth surface** | Credential stuffing, account enumeration, password reset abuse and OTP abuse are our problem. There is no MFA. | Rate limiting, generic login errors and the other rules in `.claude/rules/security.md`. MFA stays out of scope. |
 | 12 | **Token family table growth** | Every refresh adds a row, and old rows pile up. | Keep rows until `expiresAt` plus a retention period, then delete them in batches. The 30-day absolute cap bounds how long any family can live. |
-| 13 | **Registration reveals taken emails** | `409 email-already-registered` lets a caller enumerate accounts. | Rate limit by IP and email, keep the route off the gateway until the limiter lands, never log the email on that path, and keep the always-`202` flow as the fallback. |
+| 13 | **Registration reveals taken emails** | `409 email-already-registered` lets a caller enumerate accounts. | Rate limit by IP and email, the limiter has landed, never log the email on that path, and keep the always-`202` flow as the fallback. |
 
 ## Follow-ups
 

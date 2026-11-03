@@ -33,12 +33,15 @@ paths:
 
 - Return the same generic message, status and shape for every login failure ("Invalid email or password"). Never say which part was wrong.
 - Verify against a dummy hash when the user does not exist, so timing does not reveal accounts. Disabled users get the same 401 as a wrong password (verify their real hash first, then reject).
-- `POST /v1/auth/login` and `POST /v1/auth/refresh` must not be exposed through the gateway until their rate limiters have landed. Never log the email on a failed login.
+- Never log the email on a failed login.
 - Refresh answers every failure with the same `invalid-refresh-token` 401 and detail. Log the reason (ids only, never a token or hash), not the response.
 - Do the same for password reset and OTP requests, and for refresh. The response must not reveal whether an email exists. (Registration is the one exception, below.)
-- Registration may answer `409 email-already-registered` for a taken email (ADR-0013). That makes it an account-enumeration oracle, so it must be rate limited by IP and by email, and `POST /v1/auth/register` must not be exposed through the gateway until that limiter has landed. Never log the email on the 409 path.
+- Registration may answer `409 email-already-registered` for a taken email (ADR-0013). That makes it an account-enumeration oracle, so it is rate limited by IP and by email (ADR-0013). Never log the email on the 409 path.
 - Rate limit every auth endpoint (login, register, refresh, OTP, password reset) with a Redis-backed limiter, keyed by IP and by account identifier.
-- Return `429` with `Retry-After`. Limits are named constants.
+- Return `429` with `Retry-After` and the `RateLimit-*` headers. Limits are named constants (`src/rate-limit/rate-limit-constants.ts`), and each endpoint's rules are one policy in `rate-limit-policies.ts`.
+- Never put a plaintext email or refresh token in a Redis key: the key holds an HMAC with `RATE_LIMIT_KEY_PEPPER`. Never log a rate-limit key or identifier, only the policy name.
+- Decide what a limiter outage does per policy: register and login fail closed (503 with `Retry-After`), refresh and logout fail open (warning logged).
+- Read the client IP only from `request.ip` with `TRUST_PROXY_HOPS` set to the number of proxies in front (0 when none). Never read `X-Forwarded-For` yourself.
 
 ## Input
 
