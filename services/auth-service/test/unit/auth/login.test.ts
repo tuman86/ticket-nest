@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
 import { parseArgon2idPhc } from '@/auth/phc-string';
 
-import { createLoginTestApp, type LoginTestApp } from '../../support/create-login-test-app';
+import { createAuthTestApp, type AuthTestApp } from '../../support/create-auth-test-app';
 import { TEST_AUDIENCE, TEST_ISSUER, TEST_KEY_ID } from '../../support/test-signing-keys';
 
 const LOGIN_PATH = '/v1/auth/login';
@@ -38,10 +38,10 @@ function withoutCorrelationId(value: unknown): unknown {
 }
 
 describe('POST /v1/auth/login', () => {
-  let testApp: LoginTestApp;
+  let testApp: AuthTestApp;
 
   beforeAll(async () => {
-    testApp = await createLoginTestApp();
+    testApp = await createAuthTestApp();
   });
 
   describe('on success', () => {
@@ -287,7 +287,7 @@ describe('POST /v1/auth/login', () => {
 
   describe('rehash on login', () => {
     it('upgrades a hash made with weaker parameters than the current ones', async () => {
-      const stronger = await createLoginTestApp({
+      const stronger = await createAuthTestApp({
         hasher: new Argon2idPasswordHasher({ memoryKib: RAISED_MEMORY_KIB }),
       });
       const user = await stronger.addUser({ email: 'old@example.com', password: PASSWORD });
@@ -320,7 +320,7 @@ describe('POST /v1/auth/login', () => {
     });
 
     it('does not rehash after a failed login', async () => {
-      const stronger = await createLoginTestApp({
+      const stronger = await createAuthTestApp({
         hasher: new Argon2idPasswordHasher({ memoryKib: RAISED_MEMORY_KIB }),
       });
       const user = await stronger.addUser({ email: 'wrong@example.com', password: PASSWORD });

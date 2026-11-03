@@ -22,7 +22,9 @@ paths:
 - Return `Cache-Control: no-store` on every response that carries tokens.
 - Store refresh tokens hashed (SHA-256 of a random 256-bit value). Never store the raw token.
 - Rotate the refresh token on every use: revoke the old one and issue a new one in a single transaction.
-- Reusing an already-rotated refresh token is theft. Revoke the whole token family. The one exception is a retry within `REFRESH_REUSE_GRACE_MS` (10 s) of the rotation, which returns the existing successor.
+- Mark rotation with `rotatedAt` and `replacedById`, and use `revokedAt` only for logout, password change and reuse. Rotate with a conditional update (only while neither rotated nor revoked) and check the affected row count. Never check-then-update in application code.
+- Reusing an already-rotated refresh token is theft. Revoke the whole token family in its own transaction that commits before the error is thrown, and log a security event with `userId` and `familyId` only. The one exception is a replay within `REFRESH_REUSE_GRACE_MS` (default 10 s, at most 30 s) of the rotation while `revokedAt` is null: answer the standard 401 and leave the family alone. Never return the successor (only its hash is stored). A revoked token always gets a plain 401.
+- Re-read the user on every refresh (refuse a missing or `DISABLED` user) and take the role and tenant from the database, not from the old token.
 - Refresh tokens expire after 7 days idle (`REFRESH_IDLE_TTL_MS`) and 30 days after login (`REFRESH_ABSOLUTE_TTL_MS`). Never extend a family past the absolute cap.
 - Put `auth_time` (last password login) in the access token. A refresh must copy it unchanged, never reset it.
 - Reject operations marked `x-recent-login: true` when `auth_time` is older than 5 minutes (`RECENT_LOGIN_MAX_AGE_MS`) with `reauthentication-required`.
@@ -31,7 +33,8 @@ paths:
 
 - Return the same generic message, status and shape for every login failure ("Invalid email or password"). Never say which part was wrong.
 - Verify against a dummy hash when the user does not exist, so timing does not reveal accounts. Disabled users get the same 401 as a wrong password (verify their real hash first, then reject).
-- `POST /v1/auth/login` must not be exposed through the gateway until its rate limiter has landed. Never log the email on a failed login.
+- `POST /v1/auth/login` and `POST /v1/auth/refresh` must not be exposed through the gateway until their rate limiters have landed. Never log the email on a failed login.
+- Refresh answers every failure with the same `invalid-refresh-token` 401 and detail. Log the reason (ids only, never a token or hash), not the response.
 - Do the same for password reset and OTP requests, and for refresh. The response must not reveal whether an email exists. (Registration is the one exception, below.)
 - Registration may answer `409 email-already-registered` for a taken email (ADR-0013). That makes it an account-enumeration oracle, so it must be rate limited by IP and by email, and `POST /v1/auth/register` must not be exposed through the gateway until that limiter has landed. Never log the email on the 409 path.
 - Rate limit every auth endpoint (login, register, refresh, OTP, password reset) with a Redis-backed limiter, keyed by IP and by account identifier.

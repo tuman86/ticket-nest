@@ -6,7 +6,10 @@ import { DenylistBreachedPasswordChecker } from '@/auth/denylist-breached-passwo
 import { RegisterService } from '@/auth/register.service';
 
 import { createTestApp, type TestApp } from './create-test-app';
-import { createUnusedLoginService } from './create-unused-login-service';
+import {
+  createUnusedLoginService,
+  createUnusedRefreshService,
+} from './create-unused-auth-services';
 import {
   InMemoryRoleRepository,
   InMemoryUserRepository,
@@ -44,6 +47,7 @@ export function createRegisterTestApp(): RegisterTestApp {
             logger,
           }),
           loginService: createUnusedLoginService(logger),
+          refreshService: createUnusedRefreshService(logger),
         }),
       ],
     },

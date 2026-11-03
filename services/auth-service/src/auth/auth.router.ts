@@ -2,12 +2,15 @@ import { Router } from 'express';
 
 import { createLoginHandler } from './login.controller';
 import { type LoginService } from './login.service';
+import { createRefreshHandler } from './refresh.controller';
+import { type RefreshService } from './refresh.service';
 import { createRegisterHandler } from './register.controller';
 import { type RegisterService } from './register.service';
 
 export interface AuthRouterDependencies {
   readonly registerService: RegisterService;
   readonly loginService: LoginService;
+  readonly refreshService: RefreshService;
 }
 
 /**
@@ -23,5 +26,9 @@ export function createAuthRouter(dependencies: AuthRouterDependencies): Router {
   // `router.post('/v1/auth/login', loginRateLimiter, handler)`. Until it lands this route must not
   // be exposed through the gateway.
   router.post('/v1/auth/login', createLoginHandler(dependencies.loginService));
+  // The refresh rate limiter (feat/auth-rate-limit) plugs in here the same way, keyed by IP and by
+  // a hash of the presented token. Until it lands this route must not be exposed through the
+  // gateway either.
+  router.post('/v1/auth/refresh', createRefreshHandler(dependencies.refreshService));
   return router;
 }

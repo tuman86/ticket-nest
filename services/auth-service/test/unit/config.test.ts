@@ -118,3 +118,19 @@ describe('authConfigSchema', () => {
     });
   });
 });
+
+describe('REFRESH_REUSE_GRACE_MS', () => {
+  it('defaults to 10 seconds', () => {
+    expect(loadConfig(authConfigSchema, VALID_ENVIRONMENT).REFRESH_REUSE_GRACE_MS).toBe(10_000);
+  });
+
+  it('accepts a value up to 30 seconds and rejects a larger one', () => {
+    expect(
+      loadConfig(authConfigSchema, { ...VALID_ENVIRONMENT, REFRESH_REUSE_GRACE_MS: '30000' })
+        .REFRESH_REUSE_GRACE_MS,
+    ).toBe(30_000);
+    expect(() =>
+      loadConfig(authConfigSchema, { ...VALID_ENVIRONMENT, REFRESH_REUSE_GRACE_MS: '30001' }),
+    ).toThrow('REFRESH_REUSE_GRACE_MS');
+  });
+});
