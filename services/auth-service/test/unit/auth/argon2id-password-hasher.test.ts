@@ -174,3 +174,29 @@ describe('assertArgon2Available', () => {
     }).toThrow(/24\.7/);
   });
 });
+
+describe('Argon2idPasswordHasher.needsRehash', () => {
+  const current = new Argon2idPasswordHasher();
+  const stronger = new Argon2idPasswordHasher({ memoryKib: 32 * 1024, passes: 3, parallelism: 2 });
+
+  it('is false for a hash made with the current parameters', async () => {
+    expect(current.needsRehash(await current.hash(PASSWORD))).toBe(false);
+  });
+
+  it('is false for a hash made with stronger parameters than the current ones', async () => {
+    expect(current.needsRehash(await stronger.hash(PASSWORD))).toBe(false);
+  });
+
+  it.each([
+    ['memory', new Argon2idPasswordHasher({ memoryKib: 32 * 1024 })],
+    ['passes', new Argon2idPasswordHasher({ passes: 3 })],
+    ['parallelism', new Argon2idPasswordHasher({ parallelism: 2 })],
+  ])('is true when the stored %s is lower than the current one', async (_name, raised) => {
+    expect(raised.needsRehash(await current.hash(PASSWORD))).toBe(true);
+  });
+
+  it('is false for a malformed hash, which cannot verify anyway', () => {
+    expect(current.needsRehash('not-a-hash')).toBe(false);
+    expect(current.needsRehash('')).toBe(false);
+  });
+});

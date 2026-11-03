@@ -143,6 +143,62 @@ describe('PrismaUserRepository updates', () => {
     expect(reloaded?.updatedAt.getTime()).toBeGreaterThan(created.updatedAt.getTime());
   });
 
+  describe('updatePasswordHashIfUnchanged', () => {
+    it('replaces the hash while it still equals the expected one', async () => {
+      const created = await database.unitOfWork.run((tx) =>
+        database.userRepository.create(
+          buildUserInput(customerRoleId, { passwordHash: '$argon2id$old' }),
+          tx,
+        ),
+      );
+
+      const wasUpdated = await database.unitOfWork.run((tx) =>
+        database.userRepository.updatePasswordHashIfUnchanged(
+          created.id,
+          '$argon2id$old',
+          '$argon2id$upgraded',
+          tx,
+        ),
+      );
+
+      expect(wasUpdated).toBe(true);
+      expect((await database.userRepository.findById(created.id))?.passwordHash).toBe(
+        '$argon2id$upgraded',
+      );
+    });
+
+    it('leaves a hash that changed in the meantime alone', async () => {
+      const created = await database.unitOfWork.run((tx) =>
+        database.userRepository.create(
+          buildUserInput(customerRoleId, { passwordHash: '$argon2id$changed-by-user' }),
+          tx,
+        ),
+      );
+
+      const wasUpdated = await database.unitOfWork.run((tx) =>
+        database.userRepository.updatePasswordHashIfUnchanged(
+          created.id,
+          '$argon2id$what-login-read',
+          '$argon2id$upgraded',
+          tx,
+        ),
+      );
+
+      expect(wasUpdated).toBe(false);
+      expect((await database.userRepository.findById(created.id))?.passwordHash).toBe(
+        '$argon2id$changed-by-user',
+      );
+    });
+
+    it('returns false for a missing user', async () => {
+      const wasUpdated = await database.unitOfWork.run((tx) =>
+        database.userRepository.updatePasswordHashIfUnchanged(randomUUID(), 'a', 'b', tx),
+      );
+
+      expect(wasUpdated).toBe(false);
+    });
+  });
+
   it('disables and re-enables a user', async () => {
     const created = await database.unitOfWork.run((tx) =>
       database.userRepository.create(buildUserInput(customerRoleId), tx),

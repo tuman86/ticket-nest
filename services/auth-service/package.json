@@ -27,6 +27,7 @@
     "express": "catalog:",
     "helmet": "catalog:",
     "ioredis": "catalog:",
+    "jose": "catalog:",
     "pg": "catalog:",
     "zod": "catalog:"
   },

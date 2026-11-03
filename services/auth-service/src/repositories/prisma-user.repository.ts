@@ -75,6 +75,28 @@ export class PrismaUserRepository implements UserRepository {
   }
 
   /**
+   * Replaces the password hash only while it still equals `expectedPasswordHash`.
+   *
+   * @param id - The user's id.
+   * @param expectedPasswordHash - The hash the caller read and verified.
+   * @param passwordHash - The new argon2id hash.
+   * @param tx - The open transaction.
+   * @returns True when the hash was replaced, false when the user is gone or the hash changed.
+   */
+  async updatePasswordHashIfUnchanged(
+    id: string,
+    expectedPasswordHash: string,
+    passwordHash: string,
+    tx: Transaction,
+  ): Promise<boolean> {
+    const result = await selectExecutor(this.client, tx).user.updateMany({
+      where: { id, passwordHash: expectedPasswordHash },
+      data: { passwordHash },
+    });
+    return result.count > 0;
+  }
+
+  /**
    * @param id - The user's id.
    * @param status - The new status.
    * @param tx - The open transaction.

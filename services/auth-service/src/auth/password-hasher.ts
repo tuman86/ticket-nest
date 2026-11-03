@@ -17,4 +17,14 @@ export interface PasswordHasher {
    * false, never an error.
    */
   verify(password: string, storedHash: string): Promise<boolean>;
+
+  /**
+   * Tells whether a stored hash is weaker than what `hash` would produce today, so a successful
+   * login can upgrade it.
+   *
+   * @param storedHash - A value previously returned by `hash`.
+   * @returns True when any cost parameter of `storedHash` is below the current one. False for a
+   * hash that is current or stronger, and for a malformed hash (it cannot have verified).
+   */
+  needsRehash(storedHash: string): boolean;
 }

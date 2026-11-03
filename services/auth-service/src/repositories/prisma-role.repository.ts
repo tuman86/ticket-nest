@@ -12,6 +12,18 @@ export class PrismaRoleRepository implements RoleRepository {
   constructor(private readonly client: PrismaClient) {}
 
   /**
+   * @param id - The role's id.
+   * @param tx - Transaction to read in, when the call is part of one.
+   * @returns The role, or null when no role has this id.
+   */
+  findById(id: string, tx?: Transaction): Promise<RoleRecord | null> {
+    return selectExecutor(this.client, tx).role.findUnique({
+      where: { id },
+      select: { id: true, key: true, name: true },
+    });
+  }
+
+  /**
    * @param key - The role's key, for example `CUSTOMER`.
    * @param tx - Transaction to read in, when the call is part of one.
    * @returns The role, or null when no role has this key.

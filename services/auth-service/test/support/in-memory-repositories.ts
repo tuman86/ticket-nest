@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
+import {
+  type CreateRefreshTokenInput,
+  type RefreshTokenRecord,
+  type RefreshTokenRepository,
+} from '@/repositories/refresh-token.repository';
 import { type RoleRecord, type RoleRepository } from '@/repositories/role.repository';
 import { type Transaction, type UnitOfWork } from '@/repositories/transaction';
 import {
@@ -63,6 +68,19 @@ export class InMemoryUserRepository implements UserRepository {
   }
 
   /** @inheritdoc */
+  updatePasswordHashIfUnchanged(
+    id: string,
+    expectedPasswordHash: string,
+    passwordHash: string,
+  ): Promise<boolean> {
+    const user = this.users.get(id);
+    if (user?.passwordHash !== expectedPasswordHash) {
+      return Promise.resolve(false);
+    }
+    return Promise.resolve(this.update(id, { passwordHash }));
+  }
+
+  /** @inheritdoc */
   updateStatus(id: string, status: UserStatus): Promise<boolean> {
     return Promise.resolve(this.update(id, { status }));
   }
@@ -94,8 +112,85 @@ export class InMemoryRoleRepository implements RoleRepository {
   constructor(private readonly roles: readonly RoleRecord[] = [CUSTOMER_ROLE]) {}
 
   /** @inheritdoc */
+  findById(id: string): Promise<RoleRecord | null> {
+    return Promise.resolve(this.roles.find((role) => role.id === id) ?? null);
+  }
+
+  /** @inheritdoc */
   findByKey(key: string): Promise<RoleRecord | null> {
     return Promise.resolve(this.roles.find((role) => role.key === key) ?? null);
+  }
+}
+
+/** `RefreshTokenRepository` in memory. Only `create` and the reads are used by login. */
+export class InMemoryRefreshTokenRepository implements RefreshTokenRepository {
+  private readonly tokens = new Map<string, RefreshTokenRecord>();
+
+  /** @returns Every stored token, oldest first. */
+  all(): readonly RefreshTokenRecord[] {
+    return [...this.tokens.values()];
+  }
+
+  /** @inheritdoc */
+  create(input: CreateRefreshTokenInput): Promise<RefreshTokenRecord> {
+    const token: RefreshTokenRecord = {
+      ...input,
+      id: randomUUID(),
+      rotatedAt: null,
+      replacedById: null,
+      revokedAt: null,
+      createdAt: new Date(),
+    };
+    this.tokens.set(token.id, token);
+    return Promise.resolve(token);
+  }
+
+  /** @inheritdoc */
+  findByTokenHash(tokenHash: string): Promise<RefreshTokenRecord | null> {
+    return Promise.resolve(this.all().find((token) => token.tokenHash === tokenHash) ?? null);
+  }
+
+  /** @inheritdoc */
+  markRotated(id: string, replacedById: string, rotatedAt: Date): Promise<boolean> {
+    const token = this.tokens.get(id);
+    const isActive = token?.rotatedAt === null && token.revokedAt === null;
+    if (!isActive) {
+      return Promise.resolve(false);
+    }
+    this.tokens.set(id, { ...token, rotatedAt, replacedById });
+    return Promise.resolve(true);
+  }
+
+  /** @inheritdoc */
+  revokeFamily(familyId: string, revokedAt: Date): Promise<number> {
+    return Promise.resolve(this.revokeWhere((token) => token.familyId === familyId, revokedAt));
+  }
+
+  /** @inheritdoc */
+  revokeAllForUser(userId: string, revokedAt: Date): Promise<number> {
+    return Promise.resolve(this.revokeWhere((token) => token.userId === userId, revokedAt));
+  }
+
+  /** @inheritdoc */
+  deleteExpired(before: Date, limit: number): Promise<number> {
+    const expired = this.all()
+      .filter((token) => token.expiresAt < before)
+      .slice(0, limit);
+    for (const token of expired) {
+      this.tokens.delete(token.id);
+    }
+    return Promise.resolve(expired.length);
+  }
+
+  private revokeWhere(matches: (token: RefreshTokenRecord) => boolean, revokedAt: Date): number {
+    let count = 0;
+    for (const token of this.all()) {
+      if (matches(token) && token.revokedAt === null) {
+        this.tokens.set(token.id, { ...token, revokedAt });
+        count += 1;
+      }
+    }
+    return count;
   }
 }
 

@@ -75,6 +75,24 @@ export class Argon2idPasswordHasher implements PasswordHasher {
   }
 
   /**
+   * Compares the cost parameters in `storedHash` with the ones this hasher uses for new hashes.
+   *
+   * @param storedHash - A PHC string from `hash`.
+   * @returns True when memory, passes or lanes are lower than the current values.
+   */
+  needsRehash(storedHash: string): boolean {
+    const stored = parseArgon2idPhc(storedHash);
+    if (stored === null) {
+      return false;
+    }
+    return (
+      stored.memoryKib < this.memoryKib ||
+      stored.passes < this.passes ||
+      stored.parallelism < this.parallelism
+    );
+  }
+
+  /**
    * Re-derives the hash with the parameters stored in `storedHash` (so older hashes keep working
    * after the constants are raised) and compares in constant time.
    *
