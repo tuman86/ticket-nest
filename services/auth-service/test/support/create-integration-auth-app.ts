@@ -1,10 +1,11 @@
 import { createPublicKey } from 'node:crypto';
 
+import { JwtAccessTokenVerifier, StaticKeyResolver } from '@ticketnest/auth-middleware';
+import { createAuthenticateMiddleware } from '@ticketnest/auth-middleware/express';
+
 import { type Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
 import { createAuthRouter } from '@/auth/auth.router';
-import { createAuthenticateMiddleware } from '@/auth/authenticate.middleware';
 import { DenylistBreachedPasswordChecker } from '@/auth/denylist-breached-password-checker';
-import { EdDsaAccessTokenVerifier } from '@/auth/eddsa-access-token-verifier';
 import { EdDsaTokenService } from '@/auth/eddsa-token-service';
 import { LoginService } from '@/auth/login.service';
 import { LogoutService } from '@/auth/logout.service';
@@ -91,8 +92,10 @@ export async function createIntegrationAuthApp(
         }),
         createUsersRouter({
           authenticate: createAuthenticateMiddleware({
-            verifier: new EdDsaAccessTokenVerifier({
-              verificationKeys: new Map([[TEST_KEY_ID, createPublicKey(keys.privateKey)]]),
+            verifier: new JwtAccessTokenVerifier({
+              keyResolver: new StaticKeyResolver(
+                new Map([[TEST_KEY_ID, createPublicKey(keys.privateKey)]]),
+              ),
               issuer: TEST_ISSUER,
               audience: TEST_AUDIENCE,
               now: clock.now,

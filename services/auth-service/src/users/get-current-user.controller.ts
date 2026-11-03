@@ -1,6 +1,5 @@
+import { getAuthenticatedPrincipal } from '@ticketnest/auth-middleware/express';
 import { type RequestHandler, type Request, type Response } from 'express';
-
-import { getAuthenticatedPrincipal } from '../auth/authenticated-principal';
 
 import { type GetCurrentUserService } from './get-current-user.service';
 

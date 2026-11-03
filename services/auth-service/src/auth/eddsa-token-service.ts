@@ -1,13 +1,10 @@
 import { randomBytes, randomUUID, type KeyObject } from 'node:crypto';
 
+import { ACCESS_TOKEN_ALGORITHM } from '@ticketnest/auth-middleware';
 import { SignJWT } from 'jose';
 
 import { hashRefreshToken } from './refresh-token-hash';
-import {
-  ACCESS_TOKEN_ALGORITHM,
-  ACCESS_TOKEN_TTL_MS,
-  REFRESH_TOKEN_BYTES,
-} from './token-constants';
+import { ACCESS_TOKEN_TTL_MS, REFRESH_TOKEN_BYTES } from './token-constants';
 import {
   type AccessTokenClaims,
   type NewRefreshToken,

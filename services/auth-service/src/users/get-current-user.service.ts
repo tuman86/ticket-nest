@@ -1,8 +1,8 @@
+import { InvalidAccessTokenError } from '@ticketnest/auth-middleware';
 import { type UserResponse } from '@ticketnest/contracts';
 import { InternalServerError } from '@ticketnest/errors';
 import { type Logger } from '@ticketnest/logger';
 
-import { InvalidAccessTokenError } from '../auth/invalid-access-token.error';
 import { type RoleRepository } from '../repositories/role.repository';
 import { type UserRepository } from '../repositories/user.repository';
 

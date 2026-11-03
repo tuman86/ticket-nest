@@ -1,10 +1,10 @@
+import { JwtAccessTokenVerifier, StaticKeyResolver } from '@ticketnest/auth-middleware';
 import { loadConfig } from '@ticketnest/config';
 import { createLogger } from '@ticketnest/logger';
 import { Redis } from 'ioredis';
 import { Pool } from 'pg';
 
 import { createApp } from './app';
-import { EdDsaAccessTokenVerifier } from './auth/eddsa-access-token-verifier';
 import { EdDsaTokenService } from './auth/eddsa-token-service';
 import { JwksService } from './auth/jwks.service';
 import { createSigningKeySet } from './auth/signing-key-set';
@@ -79,8 +79,10 @@ async function main(): Promise<void> {
     audience: config.JWT_AUDIENCE,
   });
 
-  const accessTokenVerifier = new EdDsaAccessTokenVerifier({
-    verificationKeys: keySet.verificationKeys,
+  // auth-service holds its own keys, so it verifies its tokens from memory instead of calling its
+  // own JWKS endpoint. Every other service builds a `JwksKeyResolver` here instead.
+  const accessTokenVerifier = new JwtAccessTokenVerifier({
+    keyResolver: new StaticKeyResolver(keySet.verificationKeys),
     issuer: config.JWT_ISSUER,
     audience: config.JWT_AUDIENCE,
   });

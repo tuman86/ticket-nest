@@ -31,7 +31,11 @@ The design has to satisfy these constraints:
 - The key set is built once at startup, never per request. It is served with a strong `ETag` (304 on `If-None-Match`) and `Cache-Control: public, max-age=300`.
 - Key rotation works by overlap: publish the new key, **wait at least the 300 s cache lifetime** (counted from the last replica), start signing with it, and keep the old public key in the set until the last token signed with it has expired (10 minutes). Steps and the emergency variant are in `docs/runbooks/jwt-key-rotation.md`.
 - Verifiers check `alg`, `iss`, `aud` and `exp` on every request and reject anything else.
-- Until the shared verifier package exists, auth-service verifies its own access tokens (`GET /v1/users/me`) with a local verifier: `EdDSA` is the only accepted algorithm, the `kid` must be one of the keys the JWKS publishes (the same key set, so they cannot disagree), and `iss`, `aud` and `exp` are checked. Every failure answers one identical `401`.
+- Verification lives in `packages/auth-middleware` (`@ticketnest/auth-middleware`). auth-service uses it today (`GET /v1/users/me`); the gateway and every other service use the same package as they are built. `JwtAccessTokenVerifier` accepts only `EdDSA`, a `kid` that its `KeyResolver` knows, and the configured `iss` and `aud`, with 5 s of tolerance past `exp` (`ACCESS_TOKEN_CLOCK_TOLERANCE_MS`). Every invalid token answers one identical `401`.
+- Where the keys come from is behind the `KeyResolver` interface:
+  - auth-service uses `StaticKeyResolver` over the same in-memory key set it publishes, so it never calls its own endpoint and the two cannot disagree.
+  - Every other verifier uses `JwksKeyResolver`. It caches the key set for 300 s (the ceiling above) and refetches with the stored `ETag`. A `kid` it does not know triggers a refetch, at most once per 30 s (`JWKS_REFETCH_COOLDOWN_MS`), so forged key ids cannot flood auth-service. Concurrent lookups share one fetch, and an empty or invalid key set never replaces a good one.
+  - If auth-service cannot be reached, the last good key set keeps working for at most 1 hour (`JWKS_STALE_IF_ERROR_MS`, with a warning logged), because stateless verification is meant to survive a short auth-service outage. After that, and when nothing is cached, the verifier answers `503` with `Retry-After`, never `401`: a client with a good token must not sign itself out because of a server problem.
 
 ### Refresh token
 

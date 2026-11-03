@@ -1,10 +1,9 @@
 import { createPublicKey, type KeyObject } from 'node:crypto';
 
+import { ACCESS_TOKEN_ALGORITHM } from '@ticketnest/auth-middleware';
 import { ConfigError } from '@ticketnest/config';
 import { Jwk } from '@ticketnest/contracts';
 import { calculateJwkThumbprint } from 'jose';
-
-import { ACCESS_TOKEN_ALGORITHM } from './token-constants';
 
 const SIGNING_KEY_VARIABLE = 'JWT_PRIVATE_KEY';
 const ADDITIONAL_KEYS_VARIABLE = 'JWT_ADDITIONAL_PUBLIC_KEYS';

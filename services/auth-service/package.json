@@ -19,6 +19,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "catalog:",
     "@prisma/client": "catalog:",
+    "@ticketnest/auth-middleware": "workspace:*",
     "@ticketnest/config": "workspace:*",
     "@ticketnest/contracts": "workspace:*",
     "@ticketnest/errors": "workspace:*",

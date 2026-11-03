@@ -533,6 +533,9 @@ importers:
       '@prisma/client':
         specifier: 'catalog:'
         version: 7.10.1(prisma@7.10.1(@types/node@26.6.6)(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3))(typescript@6.0.3)
+      '@ticketnest/auth-middleware':
+        specifier: workspace:*
+        version: link:../../packages/auth-middleware
       '@ticketnest/config':
         specifier: workspace:*
         version: link:../../packages/config
