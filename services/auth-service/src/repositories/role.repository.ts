@@ -11,6 +11,13 @@ export interface RoleRecord {
 /** Storage for roles. Only this repository touches `roles`. */
 export interface RoleRepository {
   /**
+   * @param id - The role's id.
+   * @param tx - Transaction to read in, when the call is part of one.
+   * @returns The role, or null when no role has this id.
+   */
+  findById(id: string, tx?: Transaction): Promise<RoleRecord | null>;
+
+  /**
    * @param key - The role's key, for example `CUSTOMER`.
    * @param tx - Transaction to read in, when the call is part of one.
    * @returns The role, or null when no role has this key.

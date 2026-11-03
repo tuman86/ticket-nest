@@ -22,7 +22,9 @@ The design has to satisfy these constraints:
 
 - A JWT signed with **EdDSA** (RS256 is the fallback if a library or gateway lacks EdDSA support). Never a shared secret.
 - Lifetime: **10 minutes**.
-- Header: `kid`. Claims: `sub`, `role`, `permissions[]`, `tenantId` (operator users only), `auth_time` (when the user last entered their password), `iss`, `aud`, `iat`, `exp`.
+- Header: `kid`. Claims: `sub`, `role`, `permissions[]`, `tenantId` (operator users only), `auth_time` (when the user last entered their password), `iss`, `aud`, `iat`, `exp`, `jti` (random per token, so a deny-list keyed by token can be added later).
+- Signing key: auth-service reads one Ed25519 private key from the environment (`JWT_PRIVATE_KEY`, base64 of the PKCS#8 PEM, with `JWT_KEY_ID`, `JWT_ISSUER`, `JWT_AUDIENCE`). It is validated at startup and never committed. Publishing several keys for overlap rotation arrives with the JWKS endpoint.
+- Until the permission catalogue is seeded in auth-service's database, `permissions[]` is issued empty.
 - auth-service publishes the public keys at `/.well-known/jwks.json`. The gateway and every service verify with the public key only, cache the key set, and refetch it when they see an unknown `kid`. Only auth-service holds the private key.
 - Key rotation works by overlap: publish the new key, start signing with it, and keep the old public key in the set until the last token signed with it has expired.
 - Verifiers check `alg`, `iss`, `aud` and `exp` on every request and reject anything else.
@@ -65,6 +67,17 @@ Risky actions require a recent password login, instead of shortening every token
 
 - Sensitive actions: `refund:approve`, `refund:issue`, role and permission edits, `policy:manage`, and user disabling. The final list lives with the permission catalogue.
 - The owning service rejects the call when `auth_time` is older than 5 minutes (`RECENT_LOGIN_MAX_AGE_MS`). The client then asks for the password again and receives a token with a new `auth_time`.
+
+### Login
+
+`POST /v1/auth/login` takes an email and a password and returns the `TokenPair` in the JSON body (the cookie is set by the Next.js route handlers, above).
+
+- **One failure for everything.** A wrong password, an unknown email, a user without a password and a disabled user all answer the same `401 invalid-credentials` with the same detail. This replaces the `403 account-disabled` that the first draft of the OpenAPI spec listed: a distinct status for disabled accounts would let anyone confirm that an email has an account.
+- **Constant work.** Exactly one argon2id verification runs in every case. When the email is unknown, or the user has no usable hash, it runs against a dummy hash made at startup with the current parameters. A disabled user's real hash is verified before the request is rejected. After the parameters are raised, an account that still has an old, cheaper hash verifies slightly faster than the dummy until its next successful login. This residual difference is accepted.
+- **Rehash.** After a successful login, a hash with any parameter below the current one is replaced in the same transaction as the new refresh token. The update is compare-and-set on the old hash, so a password changed while the login was running is never overwritten.
+- **Session.** Each login creates a new `familyId` and stores the SHA-256 of the refresh token with the user agent and IP. `auth_time` is the login time. The response carries `Cache-Control: no-store`.
+- **Rate limiting.** Login must be rate limited by IP and by email (`feat/auth-rate-limit`), as middleware before the handler. **The limiter must land before `/v1/auth/login` is exposed through the gateway.** Until then the route exists in auth-service only.
+- Failed logins log an internal reason (`unknown_user`, `bad_password`, `disabled`) and never the email or user id.
 
 ### Registration and password hashing
 

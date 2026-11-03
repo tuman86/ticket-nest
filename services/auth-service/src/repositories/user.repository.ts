@@ -65,6 +65,24 @@ export interface UserRepository {
   updatePasswordHash(id: string, passwordHash: string, tx: Transaction): Promise<boolean>;
 
   /**
+   * Replaces the password hash only while it still equals the one the caller verified against
+   * (compare-and-set). Used to upgrade a hash after login without overwriting a password that was
+   * changed while the login was in flight.
+   *
+   * @param id - The user's id.
+   * @param expectedPasswordHash - The hash the caller read and verified.
+   * @param passwordHash - The new argon2id hash.
+   * @param tx - The open transaction.
+   * @returns True when the hash was replaced, false when the user is gone or the hash changed.
+   */
+  updatePasswordHashIfUnchanged(
+    id: string,
+    expectedPasswordHash: string,
+    passwordHash: string,
+    tx: Transaction,
+  ): Promise<boolean>;
+
+  /**
    * @param id - The user's id.
    * @param status - The new status.
    * @param tx - The open transaction.

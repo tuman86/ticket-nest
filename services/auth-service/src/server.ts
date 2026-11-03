@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 import { Pool } from 'pg';
 
 import { createApp } from './app';
+import { EdDsaTokenService } from './auth/eddsa-token-service';
 import { composeAuthRouter } from './compose-auth-router';
 import { authConfigSchema, SERVICE_NAME } from './config';
 import { createPostgresCheck } from './health/postgres-check';
@@ -14,7 +15,7 @@ const SHUTDOWN_SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const CONNECT_TIMEOUT_MS = 2_000;
 
 /** Composition root: the only place that names concrete clients. */
-function main(): void {
+async function main(): Promise<void> {
   const config = loadConfig(authConfigSchema);
   const logger = createLogger({
     serviceName: SERVICE_NAME,
@@ -54,6 +55,13 @@ function main(): void {
     exit: (code) => process.exit(code),
   });
 
+  const tokenService = new EdDsaTokenService({
+    privateKey: config.JWT_PRIVATE_KEY,
+    keyId: config.JWT_KEY_ID,
+    issuer: config.JWT_ISSUER,
+    audience: config.JWT_AUDIENCE,
+  });
+
   const app = createApp({
     logger,
     readinessChecks: [createPostgresCheck(pool), createRedisCheck(redis)],
@@ -61,7 +69,7 @@ function main(): void {
     corsOrigins: config.CORS_ORIGINS,
     jsonBodyLimit: config.JSON_BODY_LIMIT,
     isDebugInfoExposed: config.NODE_ENV === 'development',
-    routers: [composeAuthRouter(pool, logger)],
+    routers: [await composeAuthRouter(pool, logger, tokenService)],
   });
 
   const server = app.listen(config.PORT, () => {
@@ -77,10 +85,8 @@ function main(): void {
   }
 }
 
-try {
-  main();
-} catch (error) {
+main().catch((error: unknown) => {
   // The logger may not exist yet (bad config), so write plainly. Config errors list names, never values.
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
-}
+});

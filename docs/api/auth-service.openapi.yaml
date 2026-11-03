@@ -17,9 +17,10 @@ info:
 
     ## Tokens
     * **Access token** - JWT, 10 minutes, EdDSA/RS256. Public keys at
-      `/.well-known/jwks.json`. Claims: `sub`, `role`, `permissions[]`, `tenantId`,
-      `auth_time` (Unix seconds of the last password login; a refresh keeps it
-      unchanged).
+      `/.well-known/jwks.json`. Claims: `sub`, `role`, `permissions[]`, `tenantId`
+      (operator users only), `auth_time` (Unix seconds of the last password login;
+      a refresh keeps it unchanged), `iss`, `aud`, `iat`, `exp` and `jti` (unique per
+      token). The `kid` header names the signing key.
     * **Refresh token** - opaque, rotated on every use. Re-use of an already
       rotated token revokes the whole token family (`refresh-token-reuse`), except
       for a retry within 10 seconds of the rotation, which returns the same
@@ -45,11 +46,10 @@ info:
     ## Domain problem types
     | type (suffix)             | status | meaning |
     |---------------------------|--------|---------|
-    | `invalid-credentials`     | 401 | wrong email or password |
+    | `invalid-credentials`     | 401 | wrong email or password, unknown email, or a disabled account (all answered identically) |
     | `invalid-refresh-token`   | 401 | refresh token unknown, expired, or revoked |
     | `refresh-token-reuse`     | 401 | rotated token replayed after the grace window; the session family was revoked |
     | `reauthentication-required` | 401 | the operation needs a password login within the last 5 minutes |
-    | `account-disabled`        | 403 | user status is `DISABLED` |
     | `email-already-registered`| 409 | an account with this email exists |
     | `invalid-otp`             | 422 | code wrong or expired |
     | `otp-attempts-exceeded`   | 429 | too many wrong codes; request a new code |
@@ -191,6 +191,12 @@ paths:
       tags: [Authentication]
       operationId: login
       summary: Log in with email and password
+      description: |
+        Every failure answers the same `401 invalid-credentials` problem with the same
+        detail: a wrong password, an unknown email and a disabled account cannot be told
+        apart, in the body or by response time. Each login starts a new refresh-token
+        family. The refresh token is returned in the body; the web apps' server-side route
+        handlers move it into an httpOnly cookie (ADR-0013).
       security: []
       parameters:
         - $ref: './common.yaml#/components/parameters/RequestId'
@@ -204,17 +210,17 @@ paths:
           description: Authenticated.
           headers:
             X-Request-Id: { $ref: './common.yaml#/components/headers/XRequestId' }
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+              description: The response carries tokens and must never be cached.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TokenPair' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
         '401':
-          description: Wrong email or password (`invalid-credentials`). The response is identical for unknown emails.
-          content:
-            application/problem+json:
-              schema: { $ref: './common.yaml#/components/schemas/Problem' }
-        '403':
-          description: Account disabled (`account-disabled`).
+          description: >-
+            Wrong email or password, unknown email, or disabled account
+            (`invalid-credentials`). The response is identical in all three cases.
           content:
             application/problem+json:
               schema: { $ref: './common.yaml#/components/schemas/Problem' }
