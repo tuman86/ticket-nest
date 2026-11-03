@@ -10,5 +10,7 @@ export const PROBLEM_TYPE_SLUGS = {
   methodNotAllowed: 'method-not-allowed',
   conflict: 'conflict',
   validationError: 'validation-error',
+  rateLimited: 'rate-limited',
+  unavailable: 'unavailable',
   internalError: 'internal-error',
 } as const;
