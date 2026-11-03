@@ -8,7 +8,7 @@ import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
 import { parseArgon2idPhc } from '@/auth/phc-string';
 
 import { createAuthTestApp, type AuthTestApp } from '../../support/create-auth-test-app';
-import { TEST_AUDIENCE, TEST_ISSUER, TEST_KEY_ID } from '../../support/test-signing-keys';
+import { TEST_AUDIENCE, TEST_ISSUER } from '../../support/test-signing-keys';
 
 const LOGIN_PATH = '/v1/auth/login';
 const EMAIL = 'asha@example.com';
@@ -78,7 +78,7 @@ describe('POST /v1/auth/login', () => {
         audience: TEST_AUDIENCE,
         algorithms: ['EdDSA'],
       });
-      expect(protectedHeader).toMatchObject({ alg: 'EdDSA', kid: TEST_KEY_ID });
+      expect(protectedHeader).toMatchObject({ alg: 'EdDSA', kid: testApp.keyId });
       expect(payload.sub).toBe(user.id);
       expect(payload).toMatchObject({ role: 'CUSTOMER', permissions: [], auth_time: payload.iat });
       expect(payload).not.toHaveProperty('tenantId');

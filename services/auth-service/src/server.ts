@@ -1,5 +1,3 @@
-import { createPublicKey } from 'node:crypto';
-
 import { loadConfig } from '@ticketnest/config';
 import { createLogger } from '@ticketnest/logger';
 import { Redis } from 'ioredis';
@@ -8,6 +6,8 @@ import { Pool } from 'pg';
 import { createApp } from './app';
 import { EdDsaAccessTokenVerifier } from './auth/eddsa-access-token-verifier';
 import { EdDsaTokenService } from './auth/eddsa-token-service';
+import { JwksService } from './auth/jwks.service';
+import { createSigningKeySet } from './auth/signing-key-set';
 import { composeAuthRouter } from './compose-auth-router';
 import { authConfigSchema, SERVICE_NAME } from './config';
 import { createPostgresCheck } from './health/postgres-check';
@@ -25,6 +25,19 @@ async function main(): Promise<void> {
     level: config.LOG_LEVEL,
     nodeEnvironment: config.NODE_ENV,
   });
+
+  // Built before any connection opens, so a bad key stops startup without touching Postgres or Redis.
+  const keySet = await createSigningKeySet({
+    privateKey: config.JWT_PRIVATE_KEY,
+    additionalPublicKeys: config.JWT_ADDITIONAL_PUBLIC_KEYS,
+  });
+  logger.info(
+    {
+      signingKeyId: keySet.signingKeyId,
+      publishedKeyIds: keySet.publicJwks.map((jwk) => jwk.kid),
+    },
+    'signing keys loaded',
+  );
 
   const pool = new Pool({
     connectionString: config.DATABASE_URL,
@@ -59,15 +72,14 @@ async function main(): Promise<void> {
   });
 
   const tokenService = new EdDsaTokenService({
-    privateKey: config.JWT_PRIVATE_KEY,
-    keyId: config.JWT_KEY_ID,
+    privateKey: keySet.signingPrivateKey,
+    keyId: keySet.signingKeyId,
     issuer: config.JWT_ISSUER,
     audience: config.JWT_AUDIENCE,
   });
 
   const accessTokenVerifier = new EdDsaAccessTokenVerifier({
-    publicKey: createPublicKey(config.JWT_PRIVATE_KEY),
-    keyId: config.JWT_KEY_ID,
+    verificationKeys: keySet.verificationKeys,
     issuer: config.JWT_ISSUER,
     audience: config.JWT_AUDIENCE,
   });
@@ -84,6 +96,7 @@ async function main(): Promise<void> {
       logger,
       tokenService,
       accessTokenVerifier,
+      jwksService: new JwksService(keySet.publicJwks),
       refreshReuseGraceMs: config.REFRESH_REUSE_GRACE_MS,
     }),
   });
