@@ -40,6 +40,7 @@ const VALID_ENVIRONMENT = {
   JWT_PRIVATE_KEY: ENCODED_PRIVATE_KEY,
   JWT_ISSUER: 'https://auth.ticketnest.example',
   JWT_AUDIENCE: 'ticketnest-api',
+  RATE_LIMIT_KEY_PEPPER: 'test-only-pepper-0123456789abcdef-xyz',
 };
 
 describe('authConfigSchema', () => {
@@ -50,6 +51,43 @@ describe('authConfigSchema', () => {
       CORS_ORIGINS: [],
       JSON_BODY_LIMIT: '100kb',
       SHUTDOWN_TIMEOUT_MS: 10_000,
+      TRUST_PROXY_HOPS: 0,
+    });
+  });
+
+  describe('rate limiting', () => {
+    it('reads TRUST_PROXY_HOPS as a whole number', () => {
+      expect(
+        loadConfig(authConfigSchema, { ...VALID_ENVIRONMENT, TRUST_PROXY_HOPS: '1' })
+          .TRUST_PROXY_HOPS,
+      ).toBe(1);
+    });
+
+    it.each(['-1', '1.5', 'many', '11'])('rejects TRUST_PROXY_HOPS=%s', (value) => {
+      expect(() =>
+        loadConfig(authConfigSchema, { ...VALID_ENVIRONMENT, TRUST_PROXY_HOPS: value }),
+      ).toThrow(ConfigError);
+    });
+
+    it('requires RATE_LIMIT_KEY_PEPPER', () => {
+      const withoutPepper = Object.fromEntries(
+        Object.entries(VALID_ENVIRONMENT).filter(([name]) => name !== 'RATE_LIMIT_KEY_PEPPER'),
+      );
+
+      expect(() => loadConfig(authConfigSchema, withoutPepper)).toThrow(/RATE_LIMIT_KEY_PEPPER/);
+    });
+
+    it('rejects a pepper that is too short, without echoing it', () => {
+      /** Loads the environment with a pepper that is too short. */
+      const attempt = () =>
+        loadConfig(authConfigSchema, {
+          ...VALID_ENVIRONMENT,
+          RATE_LIMIT_KEY_PEPPER: 'short-pepper',
+        });
+
+      expect(attempt).toThrow(ConfigError);
+      expect(attempt).toThrow(/RATE_LIMIT_KEY_PEPPER/);
+      expect(attempt).not.toThrow(/short-pepper/);
     });
   });
 

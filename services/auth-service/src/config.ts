@@ -9,6 +9,9 @@ const DEFAULT_JSON_BODY_LIMIT = '100kb';
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 const MIN_SHUTDOWN_TIMEOUT_MS = 1_000;
 const MAX_SHUTDOWN_TIMEOUT_MS = 120_000;
+const MAX_TRUST_PROXY_HOPS = 10;
+/** A pepper shorter than this is easier to guess than the emails it is meant to protect. */
+const RATE_LIMIT_PEPPER_MIN_LENGTH = 32;
 const BODY_LIMIT_PATTERN = /^\d+(b|kb|mb)$/i;
 
 function isOrigin(value: string): boolean {
@@ -115,6 +118,17 @@ export const authConfigSchema = baseConfigSchema
     JWT_AUDIENCE: z.string().min(1),
     /** A replay of a just-rotated refresh token within this long is a retry, not theft. */
     REFRESH_REUSE_GRACE_MS: refreshReuseGraceMsSchema,
+    /**
+     * Secret mixed into the rate-limit keys of emails and refresh tokens, so Redis never holds
+     * either in plaintext and a dump cannot be matched against known emails. Changing it resets
+     * the account counters, which is harmless.
+     */
+    RATE_LIMIT_KEY_PEPPER: z.string().min(RATE_LIMIT_PEPPER_MIN_LENGTH),
+    /**
+     * Reverse proxies in front of the service whose `X-Forwarded-For` is trusted for the client
+     * IP. 0 (default) uses the socket address, so a client cannot spoof its IP; 1 behind the gateway.
+     */
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(MAX_TRUST_PROXY_HOPS).default(0),
     CORS_ORIGINS: originListSchema,
     JSON_BODY_LIMIT: z.string().regex(BODY_LIMIT_PATTERN).default(DEFAULT_JSON_BODY_LIMIT),
     SHUTDOWN_TIMEOUT_MS: z.coerce

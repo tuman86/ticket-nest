@@ -4,6 +4,7 @@ import { type Logger } from '@ticketnest/logger';
 import { vi, type MockInstance } from 'vitest';
 
 import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
+import { createAuthRateLimiters } from '@/auth/auth-rate-limiters';
 import { createAuthRouter } from '@/auth/auth.router';
 import { createAuthenticateMiddleware } from '@/auth/authenticate.middleware';
 import { DenylistBreachedPasswordChecker } from '@/auth/denylist-breached-password-checker';
@@ -16,6 +17,8 @@ import { LogoutService } from '@/auth/logout.service';
 import { RefreshService } from '@/auth/refresh.service';
 import { RegisterService } from '@/auth/register.service';
 import { createSigningKeySet, type SigningKeySet } from '@/auth/signing-key-set';
+import { type RateLimiter } from '@/rate-limit/rate-limiter';
+import { RateLimitService } from '@/rate-limit/rate-limit.service';
 import { type UserRecord } from '@/repositories/user.repository';
 import { GetCurrentUserService } from '@/users/get-current-user.service';
 import { createUsersRouter } from '@/users/users.router';
@@ -28,6 +31,7 @@ import {
   InMemoryUserRepository,
   RollbackUnitOfWork,
 } from './in-memory-repositories';
+import { createPassThroughRateLimiters } from './pass-through-rate-limiters';
 import { TestClock } from './test-clock';
 import {
   generateTestSigningKeys,
@@ -37,6 +41,7 @@ import {
 } from './test-signing-keys';
 
 export const DEFAULT_TEST_REUSE_GRACE_MS = 10_000;
+const TEST_RATE_LIMIT_PEPPER = 'test-only-pepper-0123456789abcdef-xyz';
 
 export interface AuthTestApp extends TestApp {
   readonly users: InMemoryUserRepository;
@@ -76,6 +81,11 @@ export interface AuthTestAppOptions {
   readonly reuseGraceMs?: number;
   /** Verify-only public keys published next to the signing key (a retiring or upcoming key). */
   readonly additionalPublicKeys?: readonly KeyObject[];
+  /**
+   * Turns on the real rate limits (the production policies) on this limiter. Without it every
+   * request passes, so tests of other behaviour never hit a limit.
+   */
+  readonly rateLimiter?: RateLimiter;
 }
 
 /**
@@ -114,6 +124,16 @@ export async function createAuthTestApp(options: AuthTestAppOptions = {}): Promi
     {
       buildRouters: (logger: Logger) => [
         createAuthRouter({
+          rateLimiters:
+            options.rateLimiter === undefined
+              ? createPassThroughRateLimiters()
+              : createAuthRateLimiters({
+                  rateLimitService: new RateLimitService({
+                    rateLimiter: options.rateLimiter,
+                    keyPepper: TEST_RATE_LIMIT_PEPPER,
+                    logger,
+                  }),
+                }),
           registerService: new RegisterService({
             userRepository: users,
             roleRepository: roles,

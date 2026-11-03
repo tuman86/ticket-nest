@@ -19,13 +19,28 @@ export interface AppDependencies {
   readonly isDebugInfoExposed: boolean;
   /** Feature routers, mounted after the health endpoints. */
   readonly routers?: readonly Router[];
+  /**
+   * How many reverse proxies in front of the service to trust for the client IP
+   * (`X-Forwarded-For`). Leave unset or 0 when clients reach the service directly, so no client
+   * can choose its own IP; set 1 behind the gateway.
+   */
+  readonly trustProxyHops?: number;
   readonly checkTimeoutMs?: number;
 }
 
-/** Builds the Express app. It opens no sockets and creates no clients, so tests can import it. */
+/**
+ * Builds the Express app. It opens no sockets and creates no clients, so tests can import it.
+ *
+ * @param dependencies - The logger, health checks, CORS and body limits, feature routers and the
+ *   number of proxy hops to trust for the client IP.
+ * @returns The configured app, ready to listen or to hand to Supertest.
+ */
 export function createApp(dependencies: AppDependencies): Express {
   const { logger, corsOrigins, jsonBodyLimit, routers = [] } = dependencies;
   const app = express();
+  if (dependencies.trustProxyHops !== undefined) {
+    app.set('trust proxy', dependencies.trustProxyHops);
+  }
 
   app.use(handleRequestId);
   app.use(createRequestLogger(logger));

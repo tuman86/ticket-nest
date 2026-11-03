@@ -6,6 +6,7 @@ import { type Pool } from 'pg';
 
 import { Argon2idPasswordHasher } from './auth/argon2id-password-hasher';
 import { type AccessTokenVerifier } from './auth/access-token-verifier';
+import { createAuthRateLimiters } from './auth/auth-rate-limiters';
 import { createAuthRouter } from './auth/auth.router';
 import { createAuthenticateMiddleware } from './auth/authenticate.middleware';
 import { DenylistBreachedPasswordChecker } from './auth/denylist-breached-password-checker';
@@ -16,6 +17,8 @@ import { LogoutService } from './auth/logout.service';
 import { RefreshService } from './auth/refresh.service';
 import { RegisterService } from './auth/register.service';
 import { type TokenService } from './auth/token-service';
+import { type RateLimiter } from './rate-limit/rate-limiter';
+import { RateLimitService } from './rate-limit/rate-limit.service';
 import { createPrismaClient } from './repositories/create-prisma-client';
 import { PrismaRefreshTokenRepository } from './repositories/prisma-refresh-token.repository';
 import { PrismaRoleRepository } from './repositories/prisma-role.repository';
@@ -38,6 +41,10 @@ export interface ComposeAuthRouterOptions {
   readonly jwksService: JwksService;
   /** From `REFRESH_REUSE_GRACE_MS`. */
   readonly refreshReuseGraceMs: number;
+  /** Counts requests per key for the endpoint rate limits. The caller owns its Redis client. */
+  readonly rateLimiter: RateLimiter;
+  /** From `RATE_LIMIT_KEY_PEPPER`. */
+  readonly rateLimitKeyPepper: string;
 }
 
 /**
@@ -48,7 +55,8 @@ export interface ComposeAuthRouterOptions {
  * with the same hasher and so the same parameters as real hashes, from a random password that is
  * thrown away.
  *
- * @param options - The pool, logger, token service, access-token verifier, key set service and refresh grace window.
+ * @param options - The pool, logger, token service, access-token verifier, key set service, refresh
+ *   grace window, rate limiter and its key pepper.
  * @returns The routers for the authentication endpoints, the signed-in user's endpoints and the key set.
  */
 export async function composeAuthRouter(
@@ -62,6 +70,13 @@ export async function composeAuthRouter(
   const refreshTokenRepository = new PrismaRefreshTokenRepository(prisma);
   const passwordHasher = new Argon2idPasswordHasher();
   const authRouter = createAuthRouter({
+    rateLimiters: createAuthRateLimiters({
+      rateLimitService: new RateLimitService({
+        rateLimiter: options.rateLimiter,
+        keyPepper: options.rateLimitKeyPepper,
+        logger,
+      }),
+    }),
     registerService: new RegisterService({
       userRepository,
       roleRepository,

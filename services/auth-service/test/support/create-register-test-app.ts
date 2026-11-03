@@ -11,6 +11,7 @@ import {
   createUnusedLogoutService,
   createUnusedRefreshService,
 } from './create-unused-auth-services';
+import { createPassThroughRateLimiters } from './pass-through-rate-limiters';
 import {
   InMemoryRoleRepository,
   InMemoryUserRepository,
@@ -39,6 +40,7 @@ export function createRegisterTestApp(): RegisterTestApp {
     {
       buildRouters: (logger) => [
         createAuthRouter({
+          rateLimiters: createPassThroughRateLimiters(),
           registerService: new RegisterService({
             userRepository: users,
             roleRepository: new InMemoryRoleRepository(),

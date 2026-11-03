@@ -14,6 +14,7 @@ import { GetCurrentUserService } from '@/users/get-current-user.service';
 import { createUsersRouter } from '@/users/users.router';
 
 import { createTestApp, type TestApp } from './create-test-app';
+import { createPassThroughRateLimiters } from './pass-through-rate-limiters';
 import { type TestClock } from './test-clock';
 import { type TestDatabase } from './test-database';
 import { TEST_AUDIENCE, TEST_ISSUER, TEST_KEY_ID, type TestSigningKeys } from './test-signing-keys';
@@ -51,6 +52,7 @@ export async function createIntegrationAuthApp(
     {
       buildRouters: (logger) => [
         createAuthRouter({
+          rateLimiters: createPassThroughRateLimiters(),
           registerService: new RegisterService({
             userRepository: database.userRepository,
             roleRepository: database.roleRepository,
