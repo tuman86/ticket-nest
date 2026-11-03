@@ -7,6 +7,7 @@ export const PROBLEM_TYPE_SLUGS = {
   unauthenticated: 'unauthenticated',
   forbidden: 'forbidden',
   notFound: 'not-found',
+  methodNotAllowed: 'method-not-allowed',
   conflict: 'conflict',
   validationError: 'validation-error',
   internalError: 'internal-error',

@@ -5,6 +5,7 @@ export {
   ConflictError,
   ForbiddenError,
   InternalServerError,
+  MethodNotAllowedError,
   NotFoundError,
   UnauthorizedError,
   ValidationError,
