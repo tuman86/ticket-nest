@@ -279,8 +279,18 @@ paths:
     post:
       tags: [Authentication]
       operationId: logout
-      summary: Revoke a refresh token
-      description: Idempotent. Always `204`, even if the token was already revoked or unknown.
+      summary: Log out by revoking a refresh token's whole session
+      description: |
+        Revokes the whole token family (every rotation of the presented token), so the
+        session ends even when the caller presents an older, already rotated token.
+        Idempotent and non-revealing: an unknown, expired, already rotated or already
+        revoked token gets the same `204`, so the response never tells a caller whether
+        the token was valid. Only a body that fails validation (missing or empty
+        `refreshToken`, longer than 128 characters, unknown fields) is refused, with
+        `422`. No access token is needed: possession of the refresh token is the
+        credential, and logout is most often called after the access token expired.
+        Access tokens already issued stay valid until they expire (10 minutes); see
+        ADR-0013, weak point 1.
       security: []
       requestBody:
         required: true
@@ -288,7 +298,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/RefreshRequest' }
       responses:
-        '204': { description: Token revoked. }
+        '204': { description: 'The session is ended, or there was nothing to end.' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
         '422': { $ref: './common.yaml#/components/responses/ValidationError' }
         '429': { $ref: './common.yaml#/components/responses/TooManyRequests' }
@@ -448,12 +458,18 @@ paths:
       tags: [Users]
       operationId: getCurrentUser
       summary: Get own profile
+      description: |
+        Reads the user and role from the database, never from the token claims. A user
+        who is missing or not `ACTIVE` gets the same `401` as any invalid access token.
       x-permissions: [self]
       responses:
         '200':
           description: The authenticated user.
           headers:
             ETag: { $ref: './common.yaml#/components/headers/ETag' }
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+              description: The response carries personal data and must never be cached.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
