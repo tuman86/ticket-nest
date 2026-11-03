@@ -12,6 +12,11 @@ export interface AppErrorOptions {
   readonly detail?: string;
   /** Overrides the default machine code, e.g. `SEAT_UNAVAILABLE` for a `ConflictError`. */
   readonly code?: string;
+  /**
+   * Overrides the problem type slug for a domain error, e.g. `email-already-registered`, so the
+   * `type` URI matches the service's OpenAPI spec. Status and title stay those of the base class.
+   */
+  readonly problemType?: string;
   readonly headers?: Readonly<Record<string, string>>;
   /** Extra problem members (RFC 9457 extensions), e.g. `errors` for validation. */
   readonly extensions?: Readonly<Record<string, unknown>>;
@@ -40,7 +45,7 @@ export abstract class AppError extends Error {
     this.status = definition.status;
     this.code = options.code ?? definition.code;
     this.title = definition.title;
-    this.problemType = definition.problemType;
+    this.problemType = options.problemType ?? definition.problemType;
     this.detail = options.detail;
     this.headers = { ...definition.headers, ...options.headers };
     this.extensions = options.extensions ?? {};

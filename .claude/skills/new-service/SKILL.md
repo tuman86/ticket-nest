@@ -1,13 +1,14 @@
 ---
 name: new-service
-description: Scaffold a new TicketNest backend service (catalog, booking, payment, notification) from the services/auth-service skeleton, so every service starts identical. Use when turning a placeholder under services/ into a real Express service, or when asked to "add/bootstrap/scaffold a service".
+description: Scaffold a new TicketNest backend service (catalog, booking, payment, notification) from the skeleton files of services/auth-service, so every service starts identical. Use when turning a placeholder under services/ into a real Express service, or when asked to "add/bootstrap/scaffold a service".
 argument-hint: <service-folder e.g. catalog-service>
 ---
 
-# New service from the auth-service template
+# New service from the auth-service skeleton
 
-`services/auth-service` is the template. This skill copies it, renames it, and verifies the copy.
-Do not invent a different structure: the point is that every service looks the same.
+`services/auth-service` is both the template and a real service. Only part of it is the **skeleton** that every service shares (config, app factory, composition root, shutdown, health checks, request middleware, test helpers and their tests). The rest is auth domain code and the database layer, which a new service must not inherit.
+
+The skeleton is defined by the explicit file list in step 1a. Never copy "everything tracked": that would bring over the register route, password hashing, Prisma and their tests. This skill copies the listed files, strips the auth-specific parts, renames, and verifies. Do not invent a different structure: the point is that every service looks the same.
 
 Target: `$ARGUMENTS` (a folder under `services/` such as `catalog-service`). If it is missing, ask.
 
@@ -16,28 +17,55 @@ Target: `$ARGUMENTS` (a folder under `services/` such as `catalog-service`). If 
 Check these facts; do not assume them.
 
 1. The folder exists and holds only the placeholder `src/index.ts` (`ls -a services/<name> services/<name>/src`). If it already has real code, stop and ask.
-2. **Dependencies.** The template wires Postgres and Redis. Drop what the service does not own:
+2. **Dependencies.** The skeleton wires Postgres (a `pg` Pool, for the readiness check only) and Redis. Drop what the service does not own:
    - `api-gateway` has no data (no `pg`, no Postgres check, no `DATABASE_URL`).
    - A service that does not use Redis drops `ioredis`, `redis-check.ts` and `REDIS_URL`.
    - Keep `/health/ready` honest: it checks exactly the dependencies the service really uses.
 3. **Port.** Auth uses `4001`. The repo has no port table, so pick the next free port in the 400x range, confirm it with the user, and use the same value in `Dockerfile` (`PORT`, `EXPOSE`) and `.env.example`.
 4. **Database names** come from `infra/docker/postgres/init/01-create-databases.sh`: database `<domain>`, role `<domain>_service`, password env `<DOMAIN>_DB_PASSWORD` (`catalog` / `catalog_service`). A service whose domain is not in that script needs the script and `infra/docker/.env.example` extended first (and `pnpm infra:reset` to apply).
+5. **Scope.** This skill creates the skeleton only. The database layer (Prisma schema, migrations, repositories, integration tests) is a separate, later step: see "After the skeleton".
 
 Names used below: `<name>` = folder (`catalog-service`), `<domain>` = `catalog`, `<Domain>` = `Catalog`.
 
-## 1. Copy and rename
+## 1. Copy the skeleton, strip, rename
 
-Copy the tracked files only (never `node_modules`, `dist`, `.turbo`):
+### 1a. Copy exactly these files
+
+This list is the definition of the skeleton. Copy nothing else.
 
 ```sh
 cd services
-for file in $(git -C auth-service ls-files .); do
+for file in \
+  package.json tsconfig.json vitest.config.ts eslint.config.mjs Dockerfile .env.example \
+  src/app.ts src/config.ts src/server.ts src/shutdown.ts \
+  src/health/dependency-check.ts src/health/health.router.ts \
+  src/health/postgres-check.ts src/health/redis-check.ts \
+  src/http/request-id.middleware.ts src/http/request-logger.middleware.ts \
+  test/support/create-test-app.ts \
+  test/unit/config.test.ts test/unit/shutdown.test.ts \
+  test/unit/health/health.test.ts test/unit/http/app.test.ts; do
   mkdir -p "<name>/$(dirname "$file")" && cp "auth-service/$file" "<name>/$file"
 done
 git rm -f <name>/src/index.ts   # the placeholder, if it is still there
 ```
 
-Then rename inside the copy (read each hit; do not blind-`sed` prose):
+### 1b. Strip the auth-specific parts from the copy
+
+The copied files still contain wiring for the auth domain and the database layer. Remove it:
+
+| File               | Remove                                                                                                                                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `package.json`     | scripts `postinstall` and `db:*`; dependencies `@prisma/adapter-pg`, `@prisma/client`, `@ticketnest/contracts`; devDependencies `prisma`, `@testcontainers/postgresql`, `testcontainers` (add `contracts` when first used) |
+| `tsconfig.json`    | `prisma.config.ts` from `include` (result: `["src", "test", "vitest.config.ts"]`)                                                                                                                                          |
+| `vitest.config.ts` | the `integration` project and the two timeout constants; keep the `@/` alias and the `unit` project (`extends: true`)                                                                                                      |
+| `src/server.ts`    | the `composeAuthRouter` import and the `routers: [...]` line (a skeleton mounts no feature routers)                                                                                                                        |
+| `Dockerfile`       | the `RUN node -e "...crypto.argon2..."` line and the two comment lines above it (that check exists for password hashing)                                                                                                   |
+
+Keep the `build` script exactly as in the template, including `--define:import.meta.url=__importMetaUrl` and the `--banner:js`. The generated Prisma client reads `import.meta.url`, and without that define a CJS bundle crashes at startup. It is harmless until the service gets Prisma.
+
+### 1c. Rename inside the copy
+
+Read each hit; do not blind-`sed` prose:
 
 | In auth-service                                   | Becomes                                                                                    |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -46,31 +74,33 @@ Then rename inside the copy (read each hit; do not blind-`sed` prose):
 | `AuthConfig`                                      | `<Domain>Config`                                                                           |
 | `4001`                                            | the chosen port                                                                            |
 | `auth_service:change-me-auth@localhost:5432/auth` | `<domain>_service:change-me-<domain>@localhost:5432/<domain>`                              |
+| `auth_service`, `auth` in test fixtures           | `<domain>_service`, `<domain>` (config and health tests use them as sample values)         |
 | `package.json` `description`                      | one line for this service, keep "Skeleton only: health endpoints, no business routes yet." |
 
 Keep `"type": "module"`, scripts (`dev`, `build`, `lint`, `typecheck`, `test`) and `catalog:` / `workspace:*` versions exactly as in the template. Never hard-code a version.
 
 ## 2. File checklist
 
-Every item must exist in `services/<name>/` (paths relative to it):
+Every item must exist in `services/<name>/` (paths relative to it), and nothing else:
 
-- [ ] `package.json` (scripts `dev`, `build`, `lint`, `typecheck`, `test`; deps and devDeps as in the template, minus dropped ones)
-- [ ] `tsconfig.json` (extends `@ticketnest/tsconfig/node.json`, `include: ["src"]`)
-- [ ] `eslint.config.mjs` (`export default node` from `@ticketnest/eslint-config`)
-- [ ] `Dockerfile` (filter name, `PORT`, `EXPOSE`, bundle path all renamed)
+- [ ] `package.json` (scripts `dev`, `build`, `lint`, `typecheck`, `test`; deps and devDeps as in the template, minus the dropped ones)
+- [ ] `tsconfig.json` (extends `@ticketnest/tsconfig/node.json`, `paths: { "@/*": ["./src/*"] }`, `include: ["src", "test", "vitest.config.ts"]`)
+- [ ] `vitest.config.ts` (`@/` alias, `unit` project over `test/unit/**`)
+- [ ] `eslint.config.mjs` (`export default node` from `@ticketnest/eslint-config`; keep the `src/generated/**` ignore)
+- [ ] `Dockerfile` (filter name, `PORT`, `EXPOSE`, bundle path all renamed; no argon2 check)
 - [ ] `.env.example` (names and local placeholders only, matching `infra/docker/.env.example`)
 - [ ] `src/config.ts` (`SERVICE_NAME`, `<domain>ConfigSchema = baseConfigSchema.extend({...})`)
 - [ ] `src/app.ts` (`createApp(dependencies)`: no sockets, no clients; feature routers arrive via `routers`)
-- [ ] `src/server.ts` (composition root: the only file that names `Pool` / `Redis`; `loadConfig` first)
+- [ ] `src/server.ts` (composition root: the only file that names `Pool` / `Redis`; `loadConfig` first; no routers yet)
 - [ ] `src/shutdown.ts`
 - [ ] `src/health/` (`dependency-check.ts`, `health.router.ts`, plus one `*-check.ts` per real dependency)
 - [ ] `src/http/` (`request-id.middleware.ts`, `request-logger.middleware.ts`)
-- [ ] `src/test-support/create-test-app.ts`
-- [ ] Tests: `src/config.test.ts`, `src/shutdown.test.ts`, `src/health/health.test.ts`, `src/http/app.test.ts`
+- [ ] `test/support/create-test-app.ts`
+- [ ] Tests (layout rule: `.claude/rules/testing.md`): `test/unit/config.test.ts`, `test/unit/shutdown.test.ts`, `test/unit/health/health.test.ts`, `test/unit/http/app.test.ts`
 - [ ] Root `.dockerignore` already covers all services; do not add per-service copies
 - [ ] `pnpm-workspace.yaml` `catalog:` has every dependency the copy uses (add a version there, never in the service)
 
-Not part of the skeleton, so do not add them: business routes, Prisma schema or migrations, RabbitMQ topology, outbox/inbox tables, auth/JWT middleware.
+Not part of the skeleton, so do not add them: business routes and controllers, `@ticketnest/contracts` schemas, password hashing, Prisma schema, migrations, repositories, in-memory fakes, `test/integration/`, RabbitMQ topology, outbox/inbox tables, auth/JWT middleware.
 
 Update the docs that describe the state of the repo:
 
@@ -95,6 +125,16 @@ pnpm --filter @ticketnest/<name> lint
 pnpm --filter @ticketnest/<name> test
 pnpm --filter @ticketnest/<name> build          # produces services/<name>/dist/server.cjs
 pnpm format:check                               # prettier; do not run it over docs/
+node scripts/check-test-layout.mjs              # no test or helper under src/, tests in test/unit
+```
+
+These files must stay byte-identical to the template. Any difference means the copy drifted or was edited by mistake:
+
+```sh
+for file in src/shutdown.ts src/health/dependency-check.ts src/health/health.router.ts \
+  src/http/request-id.middleware.ts src/http/request-logger.middleware.ts; do
+  diff -q services/auth-service/$file services/<name>/$file
+done
 ```
 
 Then prove the real thing starts, not just the tests:
@@ -127,7 +167,16 @@ feat(<name>): add express service skeleton with health checks and dockerfile
 
 Only commit when the user asks.
 
+## After the skeleton: the database layer
+
+A service that owns data adds its database layer as a **separate change**, not as part of this skill. Use `services/auth-service` as the reference for:
+
+- `prisma/schema.prisma`, `prisma.config.ts`, the first migration and the `db:*` scripts (rules: `.claude/rules/database.md`, and the Prisma and Migrations bullets in `CLAUDE.md`)
+- `src/repositories/` (repository interfaces, Prisma implementations, `UnitOfWork`; rules: `.claude/rules/data-access.md`)
+- `test/integration/`, `test/support/test-database.ts`, `test/support/integration-global-setup.ts` and the `integration` project in `vitest.config.ts`
+- the `postinstall` script, the Prisma dependencies, and `prisma.config.ts` in `tsconfig.json` `include`
+
 ## Notes
 
-- The skeleton files (`shutdown.ts`, `health/`, `http/`) will be identical in every service. `CLAUDE.md` says to copy the template, so copy. But `.claude/rules/code-quality.md` says logic used by two or more services belongs in `packages/*`. When this skill is run for the second service, tell the user and propose extracting those files into a shared package instead of making a third copy.
-- Update this skill whenever `services/auth-service` changes in a way every service should share, so the template and the skill do not drift.
+- The skeleton files (`shutdown.ts`, `health/`, `http/`) are identical in every service. `CLAUDE.md` says to copy the template, so copy. But `.claude/rules/code-quality.md` says logic used by two or more services belongs in `packages/*`. When this skill is run for the second service, tell the user and propose extracting those files into a shared package instead of making a third copy.
+- The file list in step 1a is the single definition of the skeleton. When `services/auth-service` gains a file that every service should share, add it to that list (and to the checklist); when a listed file stops being generic, remove it. Update this skill in the same change so the template and the skill do not drift.

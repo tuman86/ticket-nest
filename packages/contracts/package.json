@@ -7,6 +7,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./auth": "./src/auth/index.ts",
     "./common": "./src/common/index.ts",
     "./events": "./src/events/index.ts"
   },

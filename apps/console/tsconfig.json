@@ -1,4 +1,7 @@
 {
   "extends": "@ticketnest/tsconfig/nextjs.json",
-  "include": ["src"]
+  "compilerOptions": {
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["src", "test"]
 }

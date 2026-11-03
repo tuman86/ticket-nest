@@ -484,6 +484,9 @@ importers:
       '@ticketnest/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@ticketnest/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@ticketnest/errors':
         specifier: workspace:*
         version: link:../../packages/errors
