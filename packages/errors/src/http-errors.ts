@@ -53,6 +53,20 @@ const VALIDATION_ERROR: AppErrorDefinition = {
   problemType: PROBLEM_TYPE_SLUGS.validationError,
 };
 
+const TOO_MANY_REQUESTS: AppErrorDefinition = {
+  status: 429,
+  code: 'RATE_LIMITED',
+  title: 'Too many requests',
+  problemType: PROBLEM_TYPE_SLUGS.rateLimited,
+};
+
+const SERVICE_UNAVAILABLE: AppErrorDefinition = {
+  status: 503,
+  code: 'UNAVAILABLE',
+  title: 'Service unavailable',
+  problemType: PROBLEM_TYPE_SLUGS.unavailable,
+};
+
 const INTERNAL_SERVER_ERROR: AppErrorDefinition = {
   status: 500,
   code: 'INTERNAL_ERROR',
@@ -132,5 +146,62 @@ export class ValidationError extends AppError {
 export class InternalServerError extends AppError {
   constructor(options: AppErrorOptions = {}) {
     super(INTERNAL_SERVER_ERROR, options);
+  }
+}
+
+/** What a client needs to know about the limit it hit. */
+export interface RateLimitExceeded {
+  /** Requests allowed in the window that was exceeded. */
+  readonly limit: number;
+  /** Whole seconds until the window resets, at least 1. */
+  readonly retryAfterSeconds: number;
+}
+
+/** 429: a rate limit was exceeded. Sends `Retry-After` and the `RateLimit-*` headers (common.yaml). */
+export class TooManyRequestsError extends AppError {
+  /**
+   * Builds a 429 whose headers tell the client when to retry.
+   *
+   * @param rateLimit - The limit that was hit and how long until it resets.
+   * @param options - Optional code, cause and extra headers. `detail` defaults to a retry hint.
+   */
+  constructor(rateLimit: RateLimitExceeded, options: AppErrorOptions = {}) {
+    const retryAfter = String(rateLimit.retryAfterSeconds);
+    super(TOO_MANY_REQUESTS, {
+      detail: `Rate limit exceeded. Retry after ${retryAfter} seconds.`,
+      ...options,
+      headers: {
+        'Retry-After': retryAfter,
+        'RateLimit-Limit': String(rateLimit.limit),
+        'RateLimit-Remaining': '0',
+        'RateLimit-Reset': retryAfter,
+        ...options.headers,
+      },
+    });
+  }
+}
+
+/** Options of `ServiceUnavailableError`. */
+export interface ServiceUnavailableOptions extends AppErrorOptions {
+  /** Whole seconds the client should wait before retrying. */
+  readonly retryAfterSeconds: number;
+}
+
+/**
+ * 503: a dependency is down and the request was refused on purpose. Sends `Retry-After`.
+ * The response never carries `detail`, like every server error.
+ */
+export class ServiceUnavailableError extends AppError {
+  /**
+   * Builds a 503 that tells the client when to retry.
+   *
+   * @param options - The retry delay, plus optional code, cause and extra headers.
+   */
+  constructor(options: ServiceUnavailableOptions) {
+    const { retryAfterSeconds, ...rest } = options;
+    super(SERVICE_UNAVAILABLE, {
+      ...rest,
+      headers: { 'Retry-After': String(retryAfterSeconds), ...rest.headers },
+    });
   }
 }

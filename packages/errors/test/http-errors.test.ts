@@ -8,6 +8,8 @@ import {
   InternalServerError,
   MethodNotAllowedError,
   NotFoundError,
+  ServiceUnavailableError,
+  TooManyRequestsError,
   UnauthorizedError,
   ValidationError,
 } from '@/http-errors';
@@ -89,6 +91,36 @@ describe('http errors', () => {
       code: 'METHOD_NOT_ALLOWED',
       problemType: 'method-not-allowed',
       headers: { Allow: 'GET, HEAD' },
+    });
+  });
+
+  it('answers 429 with the retry and rate-limit headers from common.yaml', () => {
+    const error = new TooManyRequestsError({ limit: 10, retryAfterSeconds: 30 });
+
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({
+      status: 429,
+      code: 'RATE_LIMITED',
+      problemType: 'rate-limited',
+      detail: 'Rate limit exceeded. Retry after 30 seconds.',
+      headers: {
+        'Retry-After': '30',
+        'RateLimit-Limit': '10',
+        'RateLimit-Remaining': '0',
+        'RateLimit-Reset': '30',
+      },
+    });
+  });
+
+  it('answers 503 with a Retry-After header and the documented code', () => {
+    const error = new ServiceUnavailableError({ retryAfterSeconds: 5 });
+
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({
+      status: 503,
+      code: 'UNAVAILABLE',
+      problemType: 'unavailable',
+      headers: { 'Retry-After': '5' },
     });
   });
 });

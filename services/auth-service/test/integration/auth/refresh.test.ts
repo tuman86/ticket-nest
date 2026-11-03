@@ -14,6 +14,7 @@ import { RefreshService } from '@/auth/refresh.service';
 import { RegisterService } from '@/auth/register.service';
 
 import { createTestApp, type TestApp } from '../../support/create-test-app';
+import { createPassThroughRateLimiters } from '../../support/pass-through-rate-limiters';
 import { createUnusedLogoutService } from '../../support/create-unused-auth-services';
 import { TestClock } from '../../support/test-clock';
 import { createTestDatabase, type TestDatabase } from '../../support/test-database';
@@ -64,6 +65,7 @@ beforeAll(async () => {
     {
       buildRouters: (logger) => [
         createAuthRouter({
+          rateLimiters: createPassThroughRateLimiters(),
           registerService: new RegisterService({
             userRepository: database.userRepository,
             roleRepository: database.roleRepository,

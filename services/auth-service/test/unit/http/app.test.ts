@@ -174,3 +174,48 @@ describe('errors', () => {
     );
   });
 });
+
+describe('client IP behind a proxy', () => {
+  const FORWARDED_FOR = '198.51.100.9, 203.0.113.50';
+
+  /**
+   * Builds an app with one route that echoes the client IP Express settled on.
+   *
+   * @param trustProxyHops - How many proxy hops the app trusts, or undefined to leave it unset.
+   * @returns An app whose `/probe/ip` route answers with `request.ip`.
+   */
+  function createIpApp(trustProxyHops?: number): ReturnType<typeof createTestApp>['app'] {
+    const router = Router();
+    router.get('/probe/ip', (httpRequest, response) => {
+      response.json({ ip: httpRequest.ip });
+    });
+    return createTestApp({
+      routers: [router],
+      ...(trustProxyHops === undefined ? {} : { trustProxyHops }),
+    }).app;
+  }
+
+  it('ignores X-Forwarded-For by default, so a client cannot choose its own IP', async () => {
+    const response = await request(createIpApp())
+      .get('/probe/ip')
+      .set('X-Forwarded-For', FORWARDED_FOR);
+
+    expect((response.body as { ip: string }).ip).toMatch(/127\.0\.0\.1|::1/);
+  });
+
+  it('ignores X-Forwarded-For when zero hops are trusted', async () => {
+    const response = await request(createIpApp(0))
+      .get('/probe/ip')
+      .set('X-Forwarded-For', FORWARDED_FOR);
+
+    expect((response.body as { ip: string }).ip).toMatch(/127\.0\.0\.1|::1/);
+  });
+
+  it('takes the address the nearest trusted proxy saw when one hop is trusted', async () => {
+    const response = await request(createIpApp(1))
+      .get('/probe/ip')
+      .set('X-Forwarded-For', FORWARDED_FOR);
+
+    expect((response.body as { ip: string }).ip).toBe('203.0.113.50');
+  });
+});

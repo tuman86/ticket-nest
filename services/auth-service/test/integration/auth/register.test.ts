@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'v
 
 import { PrismaUnitOfWork } from '@/repositories/prisma-unit-of-work';
 import { createTestApp } from '../../support/create-test-app';
+import { createPassThroughRateLimiters } from '../../support/pass-through-rate-limiters';
 import {
   createUnusedLoginService,
   createUnusedLogoutService,
@@ -29,6 +30,7 @@ beforeAll(() => {
     {
       buildRouters: (logger) => [
         createAuthRouter({
+          rateLimiters: createPassThroughRateLimiters(),
           registerService: new RegisterService({
             userRepository: database.userRepository,
             roleRepository: database.roleRepository,

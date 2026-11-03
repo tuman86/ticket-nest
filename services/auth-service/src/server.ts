@@ -12,6 +12,7 @@ import { composeAuthRouter } from './compose-auth-router';
 import { authConfigSchema, SERVICE_NAME } from './config';
 import { createPostgresCheck } from './health/postgres-check';
 import { createRedisCheck } from './health/redis-check';
+import { RedisFixedWindowRateLimiter } from './rate-limit/redis-fixed-window-rate-limiter';
 import { createShutdown } from './shutdown';
 
 const SHUTDOWN_SIGNALS = ['SIGTERM', 'SIGINT'] as const;
@@ -91,6 +92,7 @@ async function main(): Promise<void> {
     corsOrigins: config.CORS_ORIGINS,
     jsonBodyLimit: config.JSON_BODY_LIMIT,
     isDebugInfoExposed: config.NODE_ENV === 'development',
+    trustProxyHops: config.TRUST_PROXY_HOPS,
     routers: await composeAuthRouter({
       pool,
       logger,
@@ -98,6 +100,8 @@ async function main(): Promise<void> {
       accessTokenVerifier,
       jwksService: new JwksService(keySet.publicJwks),
       refreshReuseGraceMs: config.REFRESH_REUSE_GRACE_MS,
+      rateLimiter: new RedisFixedWindowRateLimiter(redis),
+      rateLimitKeyPepper: config.RATE_LIMIT_KEY_PEPPER,
     }),
   });
 
