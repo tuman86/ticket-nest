@@ -29,6 +29,7 @@
     "@types/supertest": "catalog:",
     "eslint": "catalog:",
     "express": "catalog:",
+    "express-rate-limit": "catalog:",
     "supertest": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createErrorHandler, handleUnmatchedRoute } from '@ticketnest/errors/express';
 import { createLogger, type Logger } from '@ticketnest/logger';
 import express, { type Express, type Response } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import request from 'supertest';
 import { describe, expect, it, vi, type MockInstance } from 'vitest';
 
@@ -19,6 +20,8 @@ const OK = 200;
 const UNAUTHORIZED = 401;
 const INTERNAL_SERVER_ERROR = 500;
 const SERVICE_UNAVAILABLE = 503;
+const TEST_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const TEST_RATE_LIMIT_REQUESTS = 1000;
 
 const PRINCIPAL: AuthenticatedPrincipal = {
   userId: randomUUID(),
@@ -41,6 +44,18 @@ function buildApp(verify: AccessTokenVerifier['verify']): {
   const logger = createLogger({ serviceName: 'test', level: 'silent', nodeEnvironment: 'test' });
   const info = vi.spyOn(logger, 'info');
   const app = express();
+  // The routes below are fixtures, so nothing here needs rate limiting. This limiter exists because
+  // CodeQL's js/missing-rate-limiting query only recognises libraries like express-rate-limit and
+  // flags any route behind the authenticate middleware without one. Its limit is far above what the
+  // tests send, so it never answers 429.
+  app.use(
+    rateLimit({
+      windowMs: TEST_RATE_LIMIT_WINDOW_MS,
+      limit: TEST_RATE_LIMIT_REQUESTS,
+      standardHeaders: true,
+      legacyHeaders: false,
+    }),
+  );
   const authenticate = createAuthenticateMiddleware({ verifier: { verify }, logger });
   app.get('/protected', authenticate, (_, res) => {
     res.json({ userId: getAuthenticatedPrincipal(res).userId });
