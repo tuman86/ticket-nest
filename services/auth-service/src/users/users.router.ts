@@ -4,7 +4,7 @@ import { createGetCurrentUserHandler } from './get-current-user.controller';
 import { type GetCurrentUserService } from './get-current-user.service';
 
 export interface UsersRouterDependencies {
-  /** Requires a valid access token and stores the caller. The shared package will provide it. */
+  /** Requires a valid access token and stores the caller (`@ticketnest/auth-middleware/express`). */
   readonly authenticate: RequestHandler;
   readonly getCurrentUserService: GetCurrentUserService;
 }

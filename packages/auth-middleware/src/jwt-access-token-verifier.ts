@@ -5,9 +5,10 @@ import { decodeProtectedHeader, errors, jwtVerify } from 'jose';
 import { z } from 'zod';
 
 import { type AccessTokenVerifier } from './access-token-verifier';
+import { ACCESS_TOKEN_ALGORITHM, ACCESS_TOKEN_CLOCK_TOLERANCE_MS } from './access-token-constants';
 import { type AuthenticatedPrincipal } from './authenticated-principal';
 import { InvalidAccessTokenError } from './invalid-access-token.error';
-import { ACCESS_TOKEN_ALGORITHM } from './token-constants';
+import { type KeyResolver } from './key-resolver';
 
 const MILLISECONDS_PER_SECOND = 1000;
 const REQUIRED_CLAIMS = ['sub', 'exp', 'iat', 'jti'];
@@ -26,57 +27,56 @@ const AccessTokenPayload = z.looseObject({
   sid: z.never().optional(),
 });
 
-export interface EdDsaAccessTokenVerifierOptions {
-  /**
-   * Public keys by `kid`: the same map the JWKS endpoint publishes, so the two cannot disagree.
-   * A token naming any other `kid` is refused.
-   */
-  readonly verificationKeys: ReadonlyMap<string, KeyObject>;
+export interface JwtAccessTokenVerifierOptions {
+  /** Where the public key a token's `kid` names comes from. */
+  readonly keyResolver: KeyResolver;
   readonly issuer: string;
   readonly audience: string;
+  /**
+   * Drift allowed past `exp`, in milliseconds. Defaults to `ACCESS_TOKEN_CLOCK_TOLERANCE_MS`.
+   * Pass 0 only for a verifier that runs on the signer's own clock.
+   */
+  readonly clockToleranceMs?: number;
   /** Clock, replaceable in tests. */
   readonly now?: () => Date;
 }
 
 /**
- * Temporary access-token verifier for auth-service's own routes, built on `jose`. It accepts only
- * `EdDSA`, a `kid` from the published key set, and the configured issuer and audience. The shared
- * `packages/auth-middleware` replaces it.
+ * Verifies EdDSA access tokens for every service and the gateway, built on `jose`. It accepts only
+ * `EdDSA`, a `kid` its key resolver knows, and the configured issuer and audience (ADR-0013). The
+ * key source is behind `KeyResolver`, so the same verifier serves auth-service (keys in memory)
+ * and every other service (keys from the JWKS endpoint).
  */
-export class EdDsaAccessTokenVerifier implements AccessTokenVerifier {
+export class JwtAccessTokenVerifier implements AccessTokenVerifier {
   private readonly now: () => Date;
+  private readonly clockToleranceSeconds: number;
 
   /**
-   * @param options - Verification keys by `kid`, issuer, audience and optional clock.
-   * @throws TypeError when there are no keys or any key is not an Ed25519 public key.
+   * @param options - Key resolver, issuer, audience and optional tolerance and clock.
    */
-  constructor(private readonly options: EdDsaAccessTokenVerifierOptions) {
-    const keys = [...options.verificationKeys.values()];
-    if (
-      keys.length === 0 ||
-      keys.some((key) => key.type !== 'public' || key.asymmetricKeyType !== 'ed25519')
-    ) {
-      throw new TypeError('The verification keys must be a non-empty set of Ed25519 public keys.');
-    }
+  constructor(private readonly options: JwtAccessTokenVerifierOptions) {
     this.now = options.now ?? (() => new Date());
+    this.clockToleranceSeconds =
+      (options.clockToleranceMs ?? ACCESS_TOKEN_CLOCK_TOLERANCE_MS) / MILLISECONDS_PER_SECOND;
   }
 
   /**
    * Verifies algorithm, key id, signature, `iss`, `aud` and `exp`, then the shape of the claims.
-   * Expiry has no tolerance: the signer and the verifier are the same service.
    *
    * @param token - The compact JWT.
    * @returns The caller the token names.
    * @throws InvalidAccessTokenError for every invalid token.
+   * @throws KeySetUnavailableError when the key resolver cannot load the keys.
    */
   async verify(token: string): Promise<AuthenticatedPrincipal> {
-    const verificationKey = this.selectVerificationKey(token);
+    const verificationKey = await this.selectVerificationKey(token);
     try {
       const { payload } = await jwtVerify(token, verificationKey, {
         algorithms: [ACCESS_TOKEN_ALGORITHM],
         issuer: this.options.issuer,
         audience: this.options.audience,
         requiredClaims: REQUIRED_CLAIMS,
+        clockTolerance: this.clockToleranceSeconds,
         currentDate: this.now(),
       });
       return this.toPrincipal(payload);
@@ -87,13 +87,15 @@ export class EdDsaAccessTokenVerifier implements AccessTokenVerifier {
 
   /**
    * Refuses a token whose header names another algorithm or an unknown key before any signature
-   * work, so `none`, HMAC and RSA tokens never reach the verifier, then picks the key its `kid` names.
+   * work, so `none`, HMAC and RSA tokens never reach the verifier and never cost a key lookup,
+   * then asks the resolver for the key the `kid` names.
    *
    * @param token - The compact JWT.
    * @returns The public key to verify the signature with.
    * @throws InvalidAccessTokenError when the header is unreadable, or names another `alg` or an unknown `kid`.
+   * @throws KeySetUnavailableError when the resolver cannot load the keys.
    */
-  private selectVerificationKey(token: string): KeyObject {
+  private async selectVerificationKey(token: string): Promise<KeyObject> {
     let header: ReturnType<typeof decodeProtectedHeader>;
     try {
       header = decodeProtectedHeader(token);
@@ -104,7 +106,9 @@ export class EdDsaAccessTokenVerifier implements AccessTokenVerifier {
       throw new InvalidAccessTokenError('unsupported_algorithm');
     }
     const verificationKey =
-      typeof header.kid === 'string' ? this.options.verificationKeys.get(header.kid) : undefined;
+      typeof header.kid === 'string'
+        ? await this.options.keyResolver.resolveKey(header.kid)
+        : undefined;
     if (verificationKey === undefined) {
       throw new InvalidAccessTokenError('unknown_key_id');
     }

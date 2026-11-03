@@ -1,39 +1,44 @@
 import { createPublicKey, randomUUID } from 'node:crypto';
 
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { EdDsaAccessTokenVerifier } from '@/auth/eddsa-access-token-verifier';
-import { EdDsaTokenService } from '@/auth/eddsa-token-service';
-import { InvalidAccessTokenError } from '@/auth/invalid-access-token.error';
+import { ACCESS_TOKEN_CLOCK_TOLERANCE_MS } from '@/access-token-constants';
+import { InvalidAccessTokenError } from '@/invalid-access-token.error';
+import { JwtAccessTokenVerifier } from '@/jwt-access-token-verifier';
+import { type KeyResolver, KeySetUnavailableError } from '@/key-resolver';
+import { StaticKeyResolver } from '@/static-key-resolver';
 
 import {
   forgeUnsignedToken,
   generateRsaPrivateKey,
   mintAccessToken,
   tamperWithPayload,
-} from '../../support/mint-access-token';
-import { TestClock } from '../../support/test-clock';
+} from './support/mint-access-token';
+import { TestClock } from './support/test-clock';
 import {
   generateTestSigningKeys,
   TEST_AUDIENCE,
   TEST_ISSUER,
   TEST_KEY_ID,
   type TestSigningKeys,
-} from '../../support/test-signing-keys';
+} from './support/test-signing-keys';
 
-const MINUTE_MS = 60 * 1000;
+const SECOND_MS = 1000;
+const MINUTE_MS = 60 * SECOND_MS;
 const ACCESS_TOKEN_LIFETIME_MS = 10 * MINUTE_MS;
 
-describe('EdDsaAccessTokenVerifier', () => {
+describe('JwtAccessTokenVerifier', () => {
   let keys: TestSigningKeys;
   let clock: TestClock;
-  let verifier: EdDsaAccessTokenVerifier;
+  let verifier: JwtAccessTokenVerifier;
 
   beforeAll(() => {
     keys = generateTestSigningKeys();
     clock = new TestClock();
-    verifier = new EdDsaAccessTokenVerifier({
-      verificationKeys: new Map([[TEST_KEY_ID, createPublicKey(keys.privateKey)]]),
+    verifier = new JwtAccessTokenVerifier({
+      keyResolver: new StaticKeyResolver(
+        new Map([[TEST_KEY_ID, createPublicKey(keys.privateKey)]]),
+      ),
       issuer: TEST_ISSUER,
       audience: TEST_AUDIENCE,
       now: clock.now,
@@ -41,11 +46,11 @@ describe('EdDsaAccessTokenVerifier', () => {
   });
 
   /**
-   * @param verifyingToken - A compact JWT.
+   * @param token - A compact JWT.
    * @returns The reason the verifier gave for refusing it.
    */
-  async function reasonFor(verifyingToken: string): Promise<string> {
-    const error: unknown = await verifier.verify(verifyingToken).then(
+  async function reasonFor(token: string): Promise<string> {
+    const error: unknown = await verifier.verify(token).then(
       () => undefined,
       (caught: unknown) => caught,
     );
@@ -53,22 +58,14 @@ describe('EdDsaAccessTokenVerifier', () => {
     return (error as InvalidAccessTokenError).reason;
   }
 
-  it('accepts a token made by EdDsaTokenService and returns its claims', async () => {
-    const signer = new EdDsaTokenService({
-      privateKey: keys.privateKey,
-      keyId: TEST_KEY_ID,
-      issuer: TEST_ISSUER,
-      audience: TEST_AUDIENCE,
-      now: clock.now,
-    });
+  it('accepts a valid token and returns its claims as the principal', async () => {
     const userId = randomUUID();
-    const authTime = new Date(Math.floor(clock.now().getTime() / 1000) * 1000);
-    const { token } = await signer.signAccessToken({
-      userId,
-      roleKey: 'OPERATOR',
-      permissions: ['inventory:create'],
-      tenantId: null,
-      authTime,
+    const issuedAt = new Date(Math.floor(clock.now().getTime() / SECOND_MS) * SECOND_MS);
+    const token = await mintAccessToken({
+      privateKey: keys.privateKey,
+      issuedAt,
+      subject: userId,
+      claims: { role: 'OPERATOR', permissions: ['inventory:create'] },
     });
 
     const principal = await verifier.verify(token);
@@ -78,7 +75,7 @@ describe('EdDsaAccessTokenVerifier', () => {
       roleKey: 'OPERATOR',
       permissions: ['inventory:create'],
       tenantId: null,
-      authTime,
+      authTime: issuedAt,
     });
     expect(principal.tokenId).toMatch(/^[0-9a-f-]{36}$/);
   });
@@ -90,15 +87,42 @@ describe('EdDsaAccessTokenVerifier', () => {
     expect((await verifier.verify(token)).tenantId).toBe(tenantId);
   });
 
-  describe('refuses with one error type and an internal reason', () => {
-    it('expired token', async () => {
+  describe('clock tolerance', () => {
+    it('accepts a token that expired within the tolerance', async () => {
       const token = await mintAccessToken({ privateKey: keys.privateKey });
-      clock.advance(ACCESS_TOKEN_LIFETIME_MS + MINUTE_MS);
+      clock.advance(ACCESS_TOKEN_LIFETIME_MS + ACCESS_TOKEN_CLOCK_TOLERANCE_MS - SECOND_MS);
 
-      expect(await reasonFor(token)).toBe('expired');
-      clock.advance(-(ACCESS_TOKEN_LIFETIME_MS + MINUTE_MS));
+      await expect(verifier.verify(token)).resolves.toBeDefined();
+      clock.advance(-(ACCESS_TOKEN_LIFETIME_MS + ACCESS_TOKEN_CLOCK_TOLERANCE_MS - SECOND_MS));
     });
 
+    it('refuses a token that expired beyond the tolerance', async () => {
+      const token = await mintAccessToken({ privateKey: keys.privateKey });
+      clock.advance(ACCESS_TOKEN_LIFETIME_MS + ACCESS_TOKEN_CLOCK_TOLERANCE_MS + SECOND_MS);
+
+      expect(await reasonFor(token)).toBe('expired');
+      clock.advance(-(ACCESS_TOKEN_LIFETIME_MS + ACCESS_TOKEN_CLOCK_TOLERANCE_MS + SECOND_MS));
+    });
+
+    it('can be set to zero for a verifier that shares the signer clock', async () => {
+      const strictVerifier = new JwtAccessTokenVerifier({
+        keyResolver: new StaticKeyResolver(
+          new Map([[TEST_KEY_ID, createPublicKey(keys.privateKey)]]),
+        ),
+        issuer: TEST_ISSUER,
+        audience: TEST_AUDIENCE,
+        clockToleranceMs: 0,
+        now: clock.now,
+      });
+      const token = await mintAccessToken({ privateKey: keys.privateKey });
+      clock.advance(ACCESS_TOKEN_LIFETIME_MS + SECOND_MS);
+
+      await expect(strictVerifier.verify(token)).rejects.toMatchObject({ reason: 'expired' });
+      clock.advance(-(ACCESS_TOKEN_LIFETIME_MS + SECOND_MS));
+    });
+  });
+
+  describe('refuses with one error type and an internal reason', () => {
     it('tampered payload (signature no longer matches)', async () => {
       const token = await mintAccessToken({ privateKey: keys.privateKey });
 
@@ -106,9 +130,7 @@ describe('EdDsaAccessTokenVerifier', () => {
     });
 
     it('token signed by a different key with the right kid', async () => {
-      const token = await mintAccessToken({
-        privateKey: generateTestSigningKeys().privateKey,
-      });
+      const token = await mintAccessToken({ privateKey: generateTestSigningKeys().privateKey });
 
       expect(await reasonFor(token)).toBe('bad_signature');
     });
@@ -144,6 +166,7 @@ describe('EdDsaAccessTokenVerifier', () => {
     });
 
     it('alg none', async () => {
+      const nowSeconds = Math.floor(clock.now().getTime() / SECOND_MS);
       const token = forgeUnsignedToken({
         sub: randomUUID(),
         role: 'ADMIN',
@@ -152,8 +175,8 @@ describe('EdDsaAccessTokenVerifier', () => {
         iss: TEST_ISSUER,
         aud: TEST_AUDIENCE,
         jti: randomUUID(),
-        iat: Math.floor(clock.now().getTime() / 1000),
-        exp: Math.floor(clock.now().getTime() / 1000) + 600,
+        iat: nowSeconds,
+        exp: nowSeconds + 600,
       });
 
       expect(await reasonFor(token)).toBe('unsupported_algorithm');
@@ -169,7 +192,7 @@ describe('EdDsaAccessTokenVerifier', () => {
       expect(await reasonFor(token)).toBe('unsupported_algorithm');
     });
 
-    it('RS256, which this service never signs with', async () => {
+    it('RS256, which no service signs with', async () => {
       const token = await mintAccessToken({
         privateKey: generateRsaPrivateKey(),
         algorithm: 'RS256',
@@ -220,50 +243,50 @@ describe('EdDsaAccessTokenVerifier', () => {
   });
 });
 
-describe('EdDsaAccessTokenVerifier with several verification keys', () => {
-  const CURRENT_KID = 'current-kid';
-  const PREVIOUS_KID = 'previous-kid';
-  const clock = new TestClock();
-  const current = generateTestSigningKeys();
-  const previous = generateTestSigningKeys();
-  const verifier = new EdDsaAccessTokenVerifier({
-    verificationKeys: new Map([
-      [CURRENT_KID, createPublicKey(current.privateKey)],
-      [PREVIOUS_KID, createPublicKey(previous.privateKey)],
-    ]),
-    issuer: TEST_ISSUER,
-    audience: TEST_AUDIENCE,
-    now: clock.now,
-  });
+describe('JwtAccessTokenVerifier with a key resolver', () => {
+  const keys = generateTestSigningKeys();
 
-  it('accepts a token signed by either key, each under its own kid', async () => {
-    const subject = randomUUID();
-    const signedByCurrent = await mintAccessToken({
-      privateKey: current.privateKey,
-      keyId: CURRENT_KID,
-      subject,
+  it('never asks the resolver for a key when the algorithm is refused', async () => {
+    const resolveKey = vi.fn<KeyResolver['resolveKey']>();
+    const verifier = new JwtAccessTokenVerifier({
+      keyResolver: { resolveKey },
+      issuer: TEST_ISSUER,
+      audience: TEST_AUDIENCE,
     });
-    const signedByPrevious = await mintAccessToken({
-      privateKey: previous.privateKey,
-      keyId: PREVIOUS_KID,
-      subject,
+    const token = await mintAccessToken({
+      privateKey: generateRsaPrivateKey(),
+      algorithm: 'RS256',
     });
 
-    await expect(verifier.verify(signedByCurrent)).resolves.toMatchObject({ userId: subject });
-    await expect(verifier.verify(signedByPrevious)).resolves.toMatchObject({ userId: subject });
+    await expect(verifier.verify(token)).rejects.toMatchObject({ reason: 'unsupported_algorithm' });
+    expect(resolveKey).not.toHaveBeenCalled();
   });
 
-  it('refuses a token whose kid names one key but whose signature is from the other', async () => {
-    const token = await mintAccessToken({ privateKey: previous.privateKey, keyId: CURRENT_KID });
+  it('asks the resolver for the key the kid header names', async () => {
+    const resolveKey = vi
+      .fn<KeyResolver['resolveKey']>()
+      .mockResolvedValue(createPublicKey(keys.privateKey));
+    const verifier = new JwtAccessTokenVerifier({
+      keyResolver: { resolveKey },
+      issuer: TEST_ISSUER,
+      audience: TEST_AUDIENCE,
+    });
+    const token = await mintAccessToken({ privateKey: keys.privateKey, keyId: 'kid-from-jwks' });
 
-    await expect(verifier.verify(token)).rejects.toMatchObject({ reason: 'bad_signature' });
+    await expect(verifier.verify(token)).resolves.toBeDefined();
+    expect(resolveKey).toHaveBeenCalledExactlyOnceWith('kid-from-jwks');
   });
 
-  it('refuses a kid that is not in the set, including names an object would inherit', async () => {
-    for (const keyId of ['unknown-kid', 'constructor', '__proto__', 'toString']) {
-      const token = await mintAccessToken({ privateKey: current.privateKey, keyId });
+  it('lets a key set outage through as it is, so it answers 503 and not 401', async () => {
+    const outage = new KeySetUnavailableError();
+    const verifier = new JwtAccessTokenVerifier({
+      keyResolver: { resolveKey: vi.fn<KeyResolver['resolveKey']>().mockRejectedValue(outage) },
+      issuer: TEST_ISSUER,
+      audience: TEST_AUDIENCE,
+    });
+    const token = await mintAccessToken({ privateKey: keys.privateKey });
 
-      await expect(verifier.verify(token)).rejects.toMatchObject({ reason: 'unknown_key_id' });
-    }
+    await expect(verifier.verify(token)).rejects.toBe(outage);
+    expect(outage.status).toBe(503);
   });
 });

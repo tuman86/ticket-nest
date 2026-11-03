@@ -18,6 +18,7 @@ catalog:
   pino: ^10.4.0
   pino-pretty: ^13.2.0
   express: ^5.3.0
+  express-rate-limit: 8.7.1 # exact on purpose: 8.7.2 and 8.7.3 are under a month old. Test-only (CodeQL recognises it).
   '@types/express': ^5.0.6
   helmet: ^8.3.0
   cors: ^2.8.6

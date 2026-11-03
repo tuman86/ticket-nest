@@ -3,7 +3,11 @@ import { UnauthorizedError } from '@ticketnest/errors';
 /** The one message every rejected access token carries. It never says why the token was refused. */
 export const INVALID_ACCESS_TOKEN_DETAIL = 'Missing, expired, or invalid access token.';
 
-/** Why an access token was refused. For the server log only; never sent to the caller. */
+/**
+ * Why an access token was refused. For the server log only; never sent to the caller.
+ * `user_inactive` is raised by a service whose own lookup refuses an otherwise valid token (the
+ * user is gone or disabled), so every refusal still answers the same 401.
+ */
 export type AccessTokenFailureReason =
   | 'missing_header'
   | 'malformed_header'

@@ -1,14 +1,14 @@
 import { randomBytes } from 'node:crypto';
 
+import { type AccessTokenVerifier } from '@ticketnest/auth-middleware';
+import { createAuthenticateMiddleware } from '@ticketnest/auth-middleware/express';
 import { type Logger } from '@ticketnest/logger';
 import { type Router } from 'express';
 import { type Pool } from 'pg';
 
 import { Argon2idPasswordHasher } from './auth/argon2id-password-hasher';
-import { type AccessTokenVerifier } from './auth/access-token-verifier';
 import { createAuthRateLimiters } from './auth/auth-rate-limiters';
 import { createAuthRouter } from './auth/auth.router';
-import { createAuthenticateMiddleware } from './auth/authenticate.middleware';
 import { DenylistBreachedPasswordChecker } from './auth/denylist-breached-password-checker';
 import { createJwksRouter } from './auth/jwks.router';
 import { type JwksService } from './auth/jwks.service';

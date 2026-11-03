@@ -1,10 +1,11 @@
 import { type Logger } from '@ticketnest/logger';
 import { type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 
-import { type AccessTokenVerifier } from './access-token-verifier';
-import { setAuthenticatedPrincipal } from './authenticated-principal';
-import { InvalidAccessTokenError } from './invalid-access-token.error';
-import { AUTHORIZATION_HEADER_MAX_LENGTH } from './token-constants';
+import { type AccessTokenVerifier } from '../access-token-verifier';
+import { AUTHORIZATION_HEADER_MAX_LENGTH } from '../access-token-constants';
+import { InvalidAccessTokenError } from '../invalid-access-token.error';
+
+import { setAuthenticatedPrincipal } from './authenticated-principal-accessors';
 
 /** `Bearer <token68>`: the scheme is case-insensitive, the token has no spaces (RFC 6750). */
 const BEARER_PATTERN = /^Bearer ([A-Za-z0-9\-._~+/]+=*)$/i;
@@ -17,7 +18,7 @@ export interface AuthenticateMiddlewareDependencies {
 /**
  * Builds the middleware that requires a valid access token. It is the only place that knows how
  * the token travels (`Authorization: Bearer`) and which verifier checks it; controllers read the
- * result through `getAuthenticatedPrincipal`. The shared auth-middleware package replaces it.
+ * result through `getAuthenticatedPrincipal`.
  *
  * @param dependencies - The verifier and the logger.
  * @returns An Express middleware. On success it stores the caller and calls `next`.
@@ -32,6 +33,7 @@ export function createAuthenticateMiddleware(
    * @param next - Called once the caller is verified.
    * @throws InvalidAccessTokenError for any missing, malformed or invalid token. The reason goes
    * to the log only.
+   * @throws KeySetUnavailableError when the verifier cannot load its keys (answers 503).
    */
   return async (request: Request, response: Response, next: NextFunction): Promise<void> => {
     try {

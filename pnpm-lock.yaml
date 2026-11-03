@@ -206,6 +206,9 @@ catalogs:
     express:
       specifier: ^5.3.0
       version: 5.3.0
+    express-rate-limit:
+      specifier: 8.7.1
+      version: 8.7.1
     globals:
       specifier: ^17.13.0
       version: 17.13.0
@@ -310,6 +313,58 @@ importers:
       eslint:
         specifier: 'catalog:'
         version: 10.14.0(jiti@2.7.0)
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/auth-middleware:
+    dependencies:
+      '@ticketnest/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@ticketnest/errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@ticketnest/logger':
+        specifier: workspace:*
+        version: link:../logger
+      jose:
+        specifier: 'catalog:'
+        version: 6.2.15
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+    devDependencies:
+      '@ticketnest/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@ticketnest/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/express':
+        specifier: 'catalog:'
+        version: 5.0.6
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      '@types/supertest':
+        specifier: 'catalog:'
+        version: 7.2.1
+      eslint:
+        specifier: 'catalog:'
+        version: 10.14.0(jiti@2.7.0)
+      express:
+        specifier: 'catalog:'
+        version: 5.3.0
+      express-rate-limit:
+        specifier: 'catalog:'
+        version: 8.7.1(express@5.3.0)
+      supertest:
+        specifier: 'catalog:'
+        version: 7.3.1
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -484,6 +539,9 @@ importers:
       '@prisma/client':
         specifier: 'catalog:'
         version: 7.10.1(prisma@7.10.1(@types/node@26.6.6)(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3))(typescript@6.0.3)
+      '@ticketnest/auth-middleware':
+        specifier: workspace:*
+        version: link:../../packages/auth-middleware
       '@ticketnest/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -2174,6 +2232,12 @@ packages:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
 
+  express-rate-limit@8.7.1:
+    resolution: {integrity: sha512-2FXbqkygil3mZiXzEtM0IjE/UBmBNot0J1GEVrJT4JbrvwOSoEtqtO+wHbiMQELWe1eNvHoYRg2dkjOid+6JkA==}
+    engines: {node: '>= 16'}
+    peerDependencies:
+      express: '>= 4.11'
+
   express@5.3.0:
     resolution: {integrity: sha512-qCqy1xSoaugxOD4IVHb1ZWdkvCF2W3aE2okKouWj8VwJ+ztskSiXoBnCSJqfKT+cVPJhuJqe9YLbY425+Zh00g==}
     engines: {node: '>= 18'}
@@ -2408,6 +2472,10 @@ packages:
   ioredis@6.0.0:
     resolution: {integrity: sha512-f+Dtubxfpf6KYFq7WVXJoOLn0bk4TJrMrN9SzeE+jrWrCWj7XX3fA6vkryafhADX+GMymRxgDJDOI33COkJc0w==}
     engines: {node: '>=20.0.0'}
+
+  ip-address@10.7.5:
+    resolution: {integrity: sha512-t2v0rkILYv9WXmSL7TpAaU3HXgaFYOPUcH3QHgwQ++gpJuH3bqyMy4Fvt/DJCTKwzH3Cf+bAp5W/mFL39KPLzA==}
+    engines: {node: '>= 12'}
 
   ipaddr.js@1.9.1:
     resolution: {integrity: sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==}
@@ -4980,6 +5048,14 @@ snapshots:
 
   expect-type@1.4.0: {}
 
+  express-rate-limit@8.7.1(express@5.3.0):
+    dependencies:
+      debug: 4.4.3
+      express: 5.3.0
+      ip-address: 10.7.5
+    transitivePeerDependencies:
+      - supports-color
+
   express@5.3.0:
     dependencies:
       accepts: 2.0.0
@@ -5231,6 +5307,8 @@ snapshots:
       standard-as-callback: 2.1.0
     transitivePeerDependencies:
       - supports-color
+
+  ip-address@10.7.5: {}
 
   ipaddr.js@1.9.1: {}
 
