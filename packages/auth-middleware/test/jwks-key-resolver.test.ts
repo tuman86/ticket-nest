@@ -19,6 +19,8 @@ const KEY_A = 'key-a';
 const KEY_B = 'key-b';
 /** Margin that keeps "just inside the lifetime" true although `TestClock` follows real time. */
 const SAFETY_MARGIN_MS = 1000;
+/** The log message the resolver uses when it answers from keys older than the cache lifetime. */
+const STALE_WARNING_MESSAGE = 'jwks served from stale cache';
 
 /**
  * @param keyId - The `kid` to publish the key under.
@@ -206,6 +208,52 @@ describe('JwksKeyResolver', () => {
       await expect(resolver.resolveKey(KEY_A)).resolves.toBeDefined();
 
       expect(warn).toHaveBeenCalled();
+    });
+
+    describe('the warning that stale keys are in use', () => {
+      /**
+       * Brings the resolver to the state "cache is old, auth-service is down".
+       *
+       * @returns The spy on the logger's `warn`, cleared of earlier calls.
+       */
+      async function startOutageWithStaleKeys() {
+        const warn = vi.spyOn(logger, 'warn');
+        fetchKeySet.mockResolvedValueOnce(modified([[KEY_A, publicKeyA]], '"v1"'));
+        await resolver.resolveKey(KEY_A);
+        clock.advance(JWKS_CACHE_TTL_MS);
+        fetchKeySet.mockRejectedValue(new Error('timeout'));
+        warn.mockClear();
+        return warn;
+      }
+
+      /**
+       * @param warn - The spy on the logger's `warn`.
+       * @returns How many times the stale-keys warning was logged.
+       */
+      function countStaleWarnings(warn: Awaited<ReturnType<typeof startOutageWithStaleKeys>>) {
+        return warn.mock.calls.filter((call) => call[1] === STALE_WARNING_MESSAGE).length;
+      }
+
+      it('is logged once per failed fetch, not once per request', async () => {
+        const warn = await startOutageWithStaleKeys();
+
+        for (let request = 0; request < 10; request += 1) {
+          await expect(resolver.resolveKey(KEY_A)).resolves.toBeDefined();
+        }
+
+        expect(countStaleWarnings(warn)).toBe(1);
+      });
+
+      it('is logged again after the next failed fetch', async () => {
+        const warn = await startOutageWithStaleKeys();
+        await resolver.resolveKey(KEY_A);
+        clock.advance(JWKS_REFETCH_COOLDOWN_MS);
+
+        await resolver.resolveKey(KEY_A);
+        await resolver.resolveKey(KEY_A);
+
+        expect(countStaleWarnings(warn)).toBe(2);
+      });
     });
 
     it('stops serving stale keys once they are older than the stale limit', async () => {

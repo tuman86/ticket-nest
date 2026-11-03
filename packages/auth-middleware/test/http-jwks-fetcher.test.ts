@@ -29,6 +29,45 @@ function jsonResponse(body: string, headers: Record<string, string> = {}): Respo
   });
 }
 
+/** Bytes the fake body hands out per read. */
+const CHUNK_BYTES = 16 * 1024;
+const SPACE = 0x20;
+
+/**
+ * A response body that never ends and records how much of it was read and whether the reader gave
+ * up on it, so a test can prove the fetcher stops early and does not leave a body open.
+ */
+class CountingBody {
+  pulledBytes = 0;
+  isCancelled = false;
+
+  /**
+   * @param chunkBytes - Bytes handed out on each read.
+   */
+  constructor(private readonly chunkBytes: number) {}
+
+  /**
+   * @param status - The HTTP status of the response.
+   * @param headers - Response headers.
+   * @returns A response whose body is this endless stream.
+   */
+  toResponse(status: number, headers: Record<string, string> = {}): Response {
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull: (controller) => {
+          this.pulledBytes += this.chunkBytes;
+          controller.enqueue(new Uint8Array(this.chunkBytes).fill(SPACE));
+        },
+        cancel: () => {
+          this.isCancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return new Response(stream, { status, headers });
+  }
+}
+
 describe('HttpJwksFetcher', () => {
   it('returns the parsed document and the ETag on 200', async () => {
     const { fetcher } = buildFetcher(jsonResponse('{"keys":[]}', { ETag: '"abc"' }));
@@ -93,6 +132,59 @@ describe('HttpJwksFetcher', () => {
     const { fetcher } = buildFetcher(jsonResponse(' '.repeat(JWKS_MAX_RESPONSE_BYTES + 1)));
 
     await expect(fetcher.fetchKeySet(null)).rejects.toThrow();
+  });
+
+  describe('reads the body within a byte budget', () => {
+    it('stops reading an endless body shortly after the limit and cancels it', async () => {
+      const body = new CountingBody(CHUNK_BYTES);
+      const { fetcher } = buildFetcher(body.toResponse(OK));
+
+      await expect(fetcher.fetchKeySet(null)).rejects.toThrow();
+
+      expect(body.pulledBytes).toBeGreaterThan(JWKS_MAX_RESPONSE_BYTES);
+      expect(body.pulledBytes).toBeLessThanOrEqual(JWKS_MAX_RESPONSE_BYTES + CHUNK_BYTES);
+      expect(body.isCancelled).toBe(true);
+    });
+
+    it('refuses on Content-Length alone, without reading any of the body', async () => {
+      const body = new CountingBody(CHUNK_BYTES);
+      const { fetcher } = buildFetcher(
+        body.toResponse(OK, { 'Content-Length': String(JWKS_MAX_RESPONSE_BYTES + 1) }),
+      );
+
+      await expect(fetcher.fetchKeySet(null)).rejects.toThrow();
+
+      expect(body.pulledBytes).toBe(0);
+      expect(body.isCancelled).toBe(true);
+    });
+
+    it('still reads a body that is exactly at the limit', async () => {
+      const padding = ' '.repeat(JWKS_MAX_RESPONSE_BYTES - '{"keys":[]}'.length);
+      const { fetcher } = buildFetcher(jsonResponse(`{"keys":[]}${padding}`));
+
+      await expect(fetcher.fetchKeySet(null)).resolves.toMatchObject({ status: 'modified' });
+    });
+
+    it('refuses a body whose chunks are not bytes', async () => {
+      const stream = new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('not bytes');
+        },
+      });
+      const { fetcher } = buildFetcher(new Response(stream as ReadableStream, { status: OK }));
+
+      await expect(fetcher.fetchKeySet(null)).rejects.toThrow();
+    });
+
+    it('cancels the body of an error response instead of leaving it unread', async () => {
+      const body = new CountingBody(CHUNK_BYTES);
+      const { fetcher } = buildFetcher(body.toResponse(SERVER_ERROR));
+
+      await expect(fetcher.fetchKeySet(null)).rejects.toThrow();
+
+      expect(body.pulledBytes).toBe(0);
+      expect(body.isCancelled).toBe(true);
+    });
   });
 
   it('throws when the request itself fails', async () => {

@@ -44,6 +44,7 @@ export class JwksKeyResolver implements KeyResolver {
   private fetchedAtMs: number | null = null;
   private lastAttemptAtMs: number | null = null;
   private hasLastAttemptFailed = false;
+  private hasWarnedAboutStaleKeys = false;
   private inFlightFetch: Promise<void> | null = null;
 
   /**
@@ -119,6 +120,7 @@ export class JwksKeyResolver implements KeyResolver {
       this.hasLastAttemptFailed = false;
     } catch (error) {
       this.hasLastAttemptFailed = true;
+      this.hasWarnedAboutStaleKeys = false;
       logger.warn({ err: error }, 'jwks fetch failed');
     }
   }
@@ -144,7 +146,22 @@ export class JwksKeyResolver implements KeyResolver {
     if (key === undefined || keySetAgeMs > this.staleIfErrorMs) {
       throw new KeySetUnavailableError();
     }
-    this.options.logger.warn({ keySetAgeMs }, 'jwks served from stale cache');
+    this.warnAboutStaleKeysOnce(keySetAgeMs);
     return key;
+  }
+
+  /**
+   * Logs that keys older than the cache lifetime are in use, once per failed fetch. The fetch
+   * failure that caused it is logged too, so repeating this line for every request during an
+   * outage would only bury other logs.
+   *
+   * @param keySetAgeMs - How old the cached key set is.
+   */
+  private warnAboutStaleKeysOnce(keySetAgeMs: number): void {
+    if (this.hasWarnedAboutStaleKeys) {
+      return;
+    }
+    this.hasWarnedAboutStaleKeys = true;
+    this.options.logger.warn({ keySetAgeMs }, 'jwks served from stale cache');
   }
 }

@@ -4,6 +4,7 @@ import { type JwksFetcher, type JwksFetchResult } from './jwks-fetcher';
 const HTTP_NOT_MODIFIED = 304;
 const ACCEPT_HEADER = 'application/jwk-set+json, application/json';
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
+const BODY_TOO_LARGE_MESSAGE = 'The JWKS response is larger than the allowed size.';
 
 export interface HttpJwksFetcherOptions {
   /** Where auth-service publishes the key set, for example `http://auth-service:4001/.well-known/jwks.json`. */
@@ -57,13 +58,59 @@ export class HttpJwksFetcher implements JwksFetcher {
       return { status: 'not-modified' };
     }
     if (!response.ok) {
+      await discardBody(response);
       throw new Error(`The JWKS endpoint answered ${String(response.status)}.`);
     }
-    const text = await response.text();
-    if (Buffer.byteLength(text) > JWKS_MAX_RESPONSE_BYTES) {
-      throw new Error('The JWKS response is larger than the allowed size.');
-    }
+    const text = await readBodyWithinLimit(response);
     const document: unknown = JSON.parse(text);
     return { status: 'modified', document, etag: response.headers.get('ETag') };
   }
+}
+
+/**
+ * Cancels a response body that will not be read, so the connection is released at once instead of
+ * waiting for a body nobody consumes.
+ *
+ * @param response - A response whose body is not needed.
+ */
+async function discardBody(response: Response): Promise<void> {
+  await response.body?.cancel();
+}
+
+/**
+ * Reads the body as text without ever holding more than `JWKS_MAX_RESPONSE_BYTES` of it. A declared
+ * `Content-Length` over the limit is refused before any byte is read, and a body that goes over the
+ * limit anyway (no length, or a wrong one) is cancelled as soon as it does.
+ *
+ * @param response - A successful response.
+ * @returns The body decoded as UTF-8.
+ * @throws Error when the body is larger than `JWKS_MAX_RESPONSE_BYTES`.
+ */
+async function readBodyWithinLimit(response: Response): Promise<string> {
+  if (Number(response.headers.get('Content-Length') ?? 0) > JWKS_MAX_RESPONSE_BYTES) {
+    await discardBody(response);
+    throw new Error(BODY_TOO_LARGE_MESSAGE);
+  }
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    return '';
+  }
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  let chunk = await reader.read();
+  while (!chunk.done) {
+    const bytes: unknown = chunk.value;
+    if (!(bytes instanceof Uint8Array)) {
+      await reader.cancel();
+      throw new Error('The JWKS response body is not made of bytes.');
+    }
+    totalBytes += bytes.byteLength;
+    if (totalBytes > JWKS_MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error(BODY_TOO_LARGE_MESSAGE);
+    }
+    chunks.push(bytes);
+    chunk = await reader.read();
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
 }
