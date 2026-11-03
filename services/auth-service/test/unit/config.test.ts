@@ -1,5 +1,5 @@
 import { ConfigError, loadConfig } from '@ticketnest/config';
-import { generateKeyPairSync } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync, type KeyObject } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
@@ -18,6 +18,19 @@ function generateEncodedPrivateKey(type: 'ed25519' | 'rsa'): string {
   return Buffer.from(pem).toString('base64');
 }
 
+/**
+ * @param publicKey - A public key.
+ * @returns It as base64 of its SPKI PEM, the form `JWT_ADDITIONAL_PUBLIC_KEYS` entries take.
+ */
+function encodePublicKey(publicKey: KeyObject): string {
+  return Buffer.from(publicKey.export({ type: 'spki', format: 'pem' })).toString('base64');
+}
+
+/** @returns A fresh Ed25519 public key, encoded for the environment. */
+function generateEncodedPublicKey(): string {
+  return encodePublicKey(generateKeyPairSync('ed25519').publicKey);
+}
+
 const ENCODED_PRIVATE_KEY = generateEncodedPrivateKey('ed25519');
 
 const VALID_ENVIRONMENT = {
@@ -25,7 +38,6 @@ const VALID_ENVIRONMENT = {
   DATABASE_URL: 'postgres://auth_service:s3cret-pw@localhost:5432/auth',
   REDIS_URL: 'redis://:s3cret-redis@localhost:6379',
   JWT_PRIVATE_KEY: ENCODED_PRIVATE_KEY,
-  JWT_KEY_ID: 'key-2026-11',
   JWT_ISSUER: 'https://auth.ticketnest.example',
   JWT_AUDIENCE: 'ticketnest-api',
 };
@@ -85,21 +97,17 @@ describe('authConfigSchema', () => {
 
       expect(config.JWT_PRIVATE_KEY.type).toBe('private');
       expect(config.JWT_PRIVATE_KEY.asymmetricKeyType).toBe('ed25519');
-      expect(config.JWT_KEY_ID).toBe('key-2026-11');
       expect(config.JWT_ISSUER).toBe('https://auth.ticketnest.example');
       expect(config.JWT_AUDIENCE).toBe('ticketnest-api');
     });
 
-    it.each(['JWT_PRIVATE_KEY', 'JWT_KEY_ID', 'JWT_ISSUER', 'JWT_AUDIENCE'])(
-      'requires %s',
-      (name) => {
-        const environment = Object.fromEntries(
-          Object.entries(VALID_ENVIRONMENT).filter(([key]) => key !== name),
-        );
+    it.each(['JWT_PRIVATE_KEY', 'JWT_ISSUER', 'JWT_AUDIENCE'])('requires %s', (name) => {
+      const environment = Object.fromEntries(
+        Object.entries(VALID_ENVIRONMENT).filter(([key]) => key !== name),
+      );
 
-        expect(() => loadConfig(authConfigSchema, environment)).toThrow(`${name}: required`);
-      },
-    );
+      expect(() => loadConfig(authConfigSchema, environment)).toThrow(`${name}: required`);
+    });
 
     it.each([
       ['text that is not a key', Buffer.from('not a key').toString('base64')],
@@ -116,6 +124,75 @@ describe('authConfigSchema', () => {
         expect(message).not.toContain(value);
       }
     });
+  });
+});
+
+describe('JWT_ADDITIONAL_PUBLIC_KEYS', () => {
+  it('defaults to no additional keys', () => {
+    expect(loadConfig(authConfigSchema, VALID_ENVIRONMENT).JWT_ADDITIONAL_PUBLIC_KEYS).toEqual([]);
+  });
+
+  it('parses a comma-separated list into Ed25519 public key objects', () => {
+    const first = generateKeyPairSync('ed25519').publicKey;
+    const second = generateKeyPairSync('ed25519').publicKey;
+
+    const config = loadConfig(authConfigSchema, {
+      ...VALID_ENVIRONMENT,
+      JWT_ADDITIONAL_PUBLIC_KEYS: ` ${encodePublicKey(first)} , ${encodePublicKey(second)} `,
+    });
+
+    expect(config.JWT_ADDITIONAL_PUBLIC_KEYS).toHaveLength(2);
+    for (const key of config.JWT_ADDITIONAL_PUBLIC_KEYS) {
+      expect(key.type).toBe('public');
+      expect(key.asymmetricKeyType).toBe('ed25519');
+    }
+    expect(config.JWT_ADDITIONAL_PUBLIC_KEYS[0]?.export({ format: 'jwk' })).toEqual(
+      first.export({ format: 'jwk' }),
+    );
+  });
+
+  it('accepts exactly three additional keys', () => {
+    const value = [1, 2, 3].map(generateEncodedPublicKey).join(',');
+
+    const config = loadConfig(authConfigSchema, {
+      ...VALID_ENVIRONMENT,
+      JWT_ADDITIONAL_PUBLIC_KEYS: value,
+    });
+
+    expect(config.JWT_ADDITIONAL_PUBLIC_KEYS).toHaveLength(3);
+  });
+
+  const signingPublicKey = encodePublicKey(
+    createPublicKey(Buffer.from(ENCODED_PRIVATE_KEY, 'base64').toString('utf8')),
+  );
+  const duplicated = generateEncodedPublicKey();
+
+  it.each([
+    ['text that is not a key', Buffer.from('not a key').toString('base64')],
+    ['a value that is not base64 PEM', 'definitely not base64 !!!'],
+    ['a private key, which must never sit in a verify-only list', ENCODED_PRIVATE_KEY],
+    [
+      'an RSA public key',
+      encodePublicKey(generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey),
+    ],
+    ['an Ed448 public key', encodePublicKey(generateKeyPairSync('ed448').publicKey)],
+    ['the signing key itself', signingPublicKey],
+    ['the same key twice', `${duplicated},${duplicated}`],
+    ['more than three keys', [1, 2, 3, 4].map(generateEncodedPublicKey).join(',')],
+  ])('rejects %s without echoing it', (_name, value) => {
+    try {
+      loadConfig(authConfigSchema, { ...VALID_ENVIRONMENT, JWT_ADDITIONAL_PUBLIC_KEYS: value });
+      expect.unreachable('loadConfig should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError);
+      const { message } = error as ConfigError;
+      expect(message).toContain('JWT_ADDITIONAL_PUBLIC_KEYS');
+      for (const entry of value.split(',')) {
+        if (entry.trim().length > 8) {
+          expect(message).not.toContain(entry.trim());
+        }
+      }
+    }
   });
 });
 

@@ -33,8 +33,7 @@ describe('EdDsaAccessTokenVerifier', () => {
     keys = generateTestSigningKeys();
     clock = new TestClock();
     verifier = new EdDsaAccessTokenVerifier({
-      publicKey: createPublicKey(keys.privateKey),
-      keyId: TEST_KEY_ID,
+      verificationKeys: new Map([[TEST_KEY_ID, createPublicKey(keys.privateKey)]]),
       issuer: TEST_ISSUER,
       audience: TEST_AUDIENCE,
       now: clock.now,
@@ -218,5 +217,53 @@ describe('EdDsaAccessTokenVerifier', () => {
 
       expect(await reasonFor(token)).toBe('invalid_claims');
     });
+  });
+});
+
+describe('EdDsaAccessTokenVerifier with several verification keys', () => {
+  const CURRENT_KID = 'current-kid';
+  const PREVIOUS_KID = 'previous-kid';
+  const clock = new TestClock();
+  const current = generateTestSigningKeys();
+  const previous = generateTestSigningKeys();
+  const verifier = new EdDsaAccessTokenVerifier({
+    verificationKeys: new Map([
+      [CURRENT_KID, createPublicKey(current.privateKey)],
+      [PREVIOUS_KID, createPublicKey(previous.privateKey)],
+    ]),
+    issuer: TEST_ISSUER,
+    audience: TEST_AUDIENCE,
+    now: clock.now,
+  });
+
+  it('accepts a token signed by either key, each under its own kid', async () => {
+    const subject = randomUUID();
+    const signedByCurrent = await mintAccessToken({
+      privateKey: current.privateKey,
+      keyId: CURRENT_KID,
+      subject,
+    });
+    const signedByPrevious = await mintAccessToken({
+      privateKey: previous.privateKey,
+      keyId: PREVIOUS_KID,
+      subject,
+    });
+
+    await expect(verifier.verify(signedByCurrent)).resolves.toMatchObject({ userId: subject });
+    await expect(verifier.verify(signedByPrevious)).resolves.toMatchObject({ userId: subject });
+  });
+
+  it('refuses a token whose kid names one key but whose signature is from the other', async () => {
+    const token = await mintAccessToken({ privateKey: previous.privateKey, keyId: CURRENT_KID });
+
+    await expect(verifier.verify(token)).rejects.toMatchObject({ reason: 'bad_signature' });
+  });
+
+  it('refuses a kid that is not in the set, including names an object would inherit', async () => {
+    for (const keyId of ['unknown-kid', 'constructor', '__proto__', 'toString']) {
+      const token = await mintAccessToken({ privateKey: current.privateKey, keyId });
+
+      await expect(verifier.verify(token)).rejects.toMatchObject({ reason: 'unknown_key_id' });
+    }
   });
 });

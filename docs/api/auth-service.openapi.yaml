@@ -16,7 +16,7 @@ info:
     and optional `If-Match` / `ETag` concurrency control.
 
     ## Tokens
-    * **Access token** - JWT, 10 minutes, EdDSA/RS256. Public keys at
+    * **Access token** - JWT, 10 minutes, EdDSA. Public keys at
       `/.well-known/jwks.json`. Claims: `sub`, `role`, `permissions[]`, `tenantId`
       (operator users only), `auth_time` (Unix seconds of the last password login;
       a refresh keeps it unchanged), `iss`, `aud`, `iat`, `exp` and `jti` (unique per
@@ -96,20 +96,41 @@ paths:
       operationId: getJwks
       summary: JSON Web Key Set
       description: |
-        Public keys used to verify access tokens. Unversioned by convention
-        (RFC 8615). Cache with the returned `Cache-Control`; keys rotate with an
-        overlap so verifiers should refresh on an unknown `kid`.
+        Public keys used to verify access tokens (RFC 7517), Ed25519 only. Unversioned
+        by convention (RFC 8615). The `kid` of each key is its RFC 7638 JWK thumbprint,
+        so it is the same `kid` the service puts in the header of every access token it
+        signs. The set holds the current signing key first, then verify-only keys:
+        a retiring key whose tokens have not all expired, and an upcoming key published
+        ahead of its first use.
+
+        Cache with the returned `Cache-Control`, and refetch (with a cooldown) when a
+        token names an unknown `kid`. A new key is published at least one `max-age`
+        before it starts signing. Send `If-None-Match` to revalidate.
+
+        **Internal.** Verifiers inside the platform (the gateway and every service)
+        fetch this directly from auth-service. It is not routed through the gateway.
+        Only `GET` and `HEAD` are allowed.
       security: []
+      x-internal: true
       responses:
         '200':
-          description: Current signing keys.
+          description: The public signing keys.
           headers:
             Cache-Control:
               schema: { type: string }
-              description: Typically `public, max-age=300`.
+              description: '`public, max-age=300`.'
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
           content:
-            application/json:
+            application/jwk-set+json:
               schema: { $ref: '#/components/schemas/Jwks' }
+        '304':
+          description: The `If-None-Match` value matches the current key set. No body.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            ETag: { $ref: './common.yaml#/components/headers/ETag' }
+        '405':
+          $ref: './common.yaml#/components/responses/MethodNotAllowed'
 
   /healthz:
     get:
@@ -912,22 +933,29 @@ components:
     Jwks:
       type: object
       required: [keys]
+      additionalProperties: false
       properties:
         keys:
           type: array
-          items:
-            type: object
-            required: [kty, kid, use, alg]
-            properties:
-              kty: { type: string, examples: [OKP] }
-              kid: { type: string }
-              use: { type: string, enum: [sig] }
-              alg: { type: string, examples: [EdDSA] }
-              crv: { type: string }
-              x: { type: string }
-              n: { type: string }
-              e: { type: string }
-            additionalProperties: true
+          minItems: 1
+          items: { $ref: '#/components/schemas/Jwk' }
+
+    Jwk:
+      description: A public Ed25519 key (RFC 8037). Private members are never present.
+      type: object
+      required: [kty, crv, x, use, alg, kid]
+      additionalProperties: false
+      properties:
+        kty: { type: string, enum: [OKP] }
+        crv: { type: string, enum: [Ed25519] }
+        x:
+          type: string
+          description: Public key, base64url.
+        use: { type: string, enum: [sig] }
+        alg: { type: string, enum: [EdDSA] }
+        kid:
+          type: string
+          description: RFC 7638 SHA-256 thumbprint of the key, base64url.
 
     # ------------------------------------------------------------ requests --
     RegisterRequest:

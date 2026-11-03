@@ -1,4 +1,4 @@
-import { createPublicKey, randomBytes } from 'node:crypto';
+import { randomBytes, type KeyObject } from 'node:crypto';
 
 import { type Logger } from '@ticketnest/logger';
 import { vi, type MockInstance } from 'vitest';
@@ -9,10 +9,13 @@ import { createAuthenticateMiddleware } from '@/auth/authenticate.middleware';
 import { DenylistBreachedPasswordChecker } from '@/auth/denylist-breached-password-checker';
 import { EdDsaAccessTokenVerifier } from '@/auth/eddsa-access-token-verifier';
 import { EdDsaTokenService } from '@/auth/eddsa-token-service';
+import { JwksService } from '@/auth/jwks.service';
+import { createJwksRouter } from '@/auth/jwks.router';
 import { LoginService } from '@/auth/login.service';
 import { LogoutService } from '@/auth/logout.service';
 import { RefreshService } from '@/auth/refresh.service';
 import { RegisterService } from '@/auth/register.service';
+import { createSigningKeySet, type SigningKeySet } from '@/auth/signing-key-set';
 import { type UserRecord } from '@/repositories/user.repository';
 import { GetCurrentUserService } from '@/users/get-current-user.service';
 import { createUsersRouter } from '@/users/users.router';
@@ -30,7 +33,6 @@ import {
   generateTestSigningKeys,
   TEST_AUDIENCE,
   TEST_ISSUER,
-  TEST_KEY_ID,
   type TestSigningKeys,
 } from './test-signing-keys';
 
@@ -44,6 +46,10 @@ export interface AuthTestApp extends TestApp {
   readonly verifySpy: MockInstance<Argon2idPasswordHasher['verify']>;
   readonly dummyPasswordHash: string;
   readonly keys: TestSigningKeys;
+  /** The key set the token service, the `/me` verifier and the JWKS endpoint all share. */
+  readonly keySet: SigningKeySet;
+  /** The `kid` of the signing key: the header of every token this app issues. */
+  readonly keyId: string;
   /** Drives the time every service sees. Call `advance` to jump forward. */
   readonly clock: TestClock;
   /**
@@ -68,6 +74,8 @@ export interface AuthTestAppOptions {
   readonly hasher?: Argon2idPasswordHasher;
   /** Grace window of the refresh service. Defaults to 10 seconds. */
   readonly reuseGraceMs?: number;
+  /** Verify-only public keys published next to the signing key (a retiring or upcoming key). */
+  readonly additionalPublicKeys?: readonly KeyObject[];
 }
 
 /**
@@ -89,9 +97,13 @@ export async function createAuthTestApp(options: AuthTestAppOptions = {}): Promi
   const legacyHasher = new Argon2idPasswordHasher();
   const keys = generateTestSigningKeys();
   const dummyPasswordHash = await hasher.hash(randomBytes(32).toString('base64'));
-  const tokenService = new EdDsaTokenService({
+  const keySet = await createSigningKeySet({
     privateKey: keys.privateKey,
-    keyId: TEST_KEY_ID,
+    additionalPublicKeys: options.additionalPublicKeys ?? [],
+  });
+  const tokenService = new EdDsaTokenService({
+    privateKey: keySet.signingPrivateKey,
+    keyId: keySet.signingKeyId,
     issuer: TEST_ISSUER,
     audience: TEST_AUDIENCE,
     now: clock.now,
@@ -141,8 +153,7 @@ export async function createAuthTestApp(options: AuthTestAppOptions = {}): Promi
         createUsersRouter({
           authenticate: createAuthenticateMiddleware({
             verifier: new EdDsaAccessTokenVerifier({
-              publicKey: createPublicKey(keys.privateKey),
-              keyId: TEST_KEY_ID,
+              verificationKeys: keySet.verificationKeys,
               issuer: TEST_ISSUER,
               audience: TEST_AUDIENCE,
               now: clock.now,
@@ -155,6 +166,7 @@ export async function createAuthTestApp(options: AuthTestAppOptions = {}): Promi
             logger,
           }),
         }),
+        createJwksRouter({ jwksService: new JwksService(keySet.publicJwks) }),
       ],
     },
   );
@@ -167,6 +179,8 @@ export async function createAuthTestApp(options: AuthTestAppOptions = {}): Promi
     verifySpy,
     dummyPasswordHash,
     keys,
+    keySet,
+    keyId: keySet.signingKeyId,
     clock,
     async addUser(input) {
       const user = await users.create({

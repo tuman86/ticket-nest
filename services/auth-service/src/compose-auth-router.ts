@@ -9,6 +9,8 @@ import { type AccessTokenVerifier } from './auth/access-token-verifier';
 import { createAuthRouter } from './auth/auth.router';
 import { createAuthenticateMiddleware } from './auth/authenticate.middleware';
 import { DenylistBreachedPasswordChecker } from './auth/denylist-breached-password-checker';
+import { createJwksRouter } from './auth/jwks.router';
+import { type JwksService } from './auth/jwks.service';
 import { LoginService } from './auth/login.service';
 import { LogoutService } from './auth/logout.service';
 import { RefreshService } from './auth/refresh.service';
@@ -32,6 +34,8 @@ export interface ComposeAuthRouterOptions {
   readonly tokenService: TokenService;
   /** Checks the access tokens of routes that require sign-in. */
   readonly accessTokenVerifier: AccessTokenVerifier;
+  /** Serves the public keys at `/.well-known/jwks.json`. Holds no private key. */
+  readonly jwksService: JwksService;
   /** From `REFRESH_REUSE_GRACE_MS`. */
   readonly refreshReuseGraceMs: number;
 }
@@ -44,8 +48,8 @@ export interface ComposeAuthRouterOptions {
  * with the same hasher and so the same parameters as real hashes, from a random password that is
  * thrown away.
  *
- * @param options - The pool, logger, token service, access-token verifier and refresh grace window.
- * @returns The routers for the authentication endpoints and the signed-in user's endpoints.
+ * @param options - The pool, logger, token service, access-token verifier, key set service and refresh grace window.
+ * @returns The routers for the authentication endpoints, the signed-in user's endpoints and the key set.
  */
 export async function composeAuthRouter(
   options: ComposeAuthRouterOptions,
@@ -93,5 +97,5 @@ export async function composeAuthRouter(
     authenticate: createAuthenticateMiddleware({ verifier: options.accessTokenVerifier, logger }),
     getCurrentUserService: new GetCurrentUserService({ userRepository, roleRepository, logger }),
   });
-  return [authRouter, usersRouter];
+  return [authRouter, usersRouter, createJwksRouter({ jwksService: options.jwksService })];
 }

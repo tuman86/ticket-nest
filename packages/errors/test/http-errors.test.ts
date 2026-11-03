@@ -6,6 +6,7 @@ import {
   ConflictError,
   ForbiddenError,
   InternalServerError,
+  MethodNotAllowedError,
   NotFoundError,
   UnauthorizedError,
   ValidationError,
@@ -75,5 +76,19 @@ describe('http errors', () => {
     expect(error.fieldErrors).toEqual(fieldErrors);
     expect(error.extensions).toEqual({ errors: fieldErrors });
     expect(error.detail).toBe('One or more fields are invalid.');
+  });
+
+  it('answers 405 with an Allow header listing the accepted methods', () => {
+    const error = new MethodNotAllowedError(['GET', 'HEAD'], {
+      detail: 'This path does not accept POST.',
+    });
+
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({
+      status: 405,
+      code: 'METHOD_NOT_ALLOWED',
+      problemType: 'method-not-allowed',
+      headers: { Allow: 'GET, HEAD' },
+    });
   });
 });

@@ -90,8 +90,7 @@ export async function createIntegrationAuthApp(
         createUsersRouter({
           authenticate: createAuthenticateMiddleware({
             verifier: new EdDsaAccessTokenVerifier({
-              publicKey: createPublicKey(keys.privateKey),
-              keyId: TEST_KEY_ID,
+              verificationKeys: new Map([[TEST_KEY_ID, createPublicKey(keys.privateKey)]]),
               issuer: TEST_ISSUER,
               audience: TEST_AUDIENCE,
               now: clock.now,

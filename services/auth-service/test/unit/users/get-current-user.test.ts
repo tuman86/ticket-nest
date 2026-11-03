@@ -111,6 +111,7 @@ describe('GET /v1/users/me', () => {
       const { userId } = await loginNewUser();
       const token = await mintAccessToken({
         privateKey: testApp.keys.privateKey,
+        keyId: testApp.keyId,
         subject: userId,
         issuedAt: testApp.clock.now(),
         claims: { role: 'ADMIN', permissions: ['user:manage'], tenantId: randomUUID() },
@@ -132,7 +133,7 @@ describe('GET /v1/users/me', () => {
       const { userId, accessToken } = await loginNewUser();
       const issuedAt = testApp.clock.now();
       const valid = (overrides: Parameters<typeof mintAccessToken>[0]) =>
-        mintAccessToken({ issuedAt, subject: userId, ...overrides });
+        mintAccessToken({ issuedAt, subject: userId, keyId: testApp.keyId, ...overrides });
       const expired = await valid({
         privateKey: testApp.keys.privateKey,
         issuedAt: new Date(issuedAt.getTime() - 20 * MINUTE_MS),
@@ -201,6 +202,7 @@ describe('GET /v1/users/me', () => {
     it('gives the same 401 when the user no longer exists', async () => {
       const token = await mintAccessToken({
         privateKey: testApp.keys.privateKey,
+        keyId: testApp.keyId,
         issuedAt: testApp.clock.now(),
         subject: randomUUID(),
       });

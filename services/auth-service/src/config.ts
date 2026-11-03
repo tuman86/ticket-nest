@@ -1,4 +1,4 @@
-import { createPrivateKey, type KeyObject } from 'node:crypto';
+import { createPrivateKey, createPublicKey, type KeyObject } from 'node:crypto';
 
 import { baseConfigSchema, refreshReuseGraceMsSchema } from '@ticketnest/config';
 import { z } from 'zod';
@@ -50,27 +50,94 @@ const ed25519PrivateKeySchema = z
     return z.NEVER;
   });
 
-export const authConfigSchema = baseConfigSchema.extend({
-  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
-  REDIS_URL: z.url({ protocol: /^rediss?$/ }),
-  /** Access-token signing key. Only auth-service holds it; verifiers get the public key. */
-  JWT_PRIVATE_KEY: ed25519PrivateKeySchema,
-  /** Goes in the `kid` header so verifiers can pick the matching public key. */
-  JWT_KEY_ID: z.string().min(1),
-  /** The `iss` claim verifiers must require. */
-  JWT_ISSUER: z.string().min(1),
-  /** The `aud` claim verifiers must require. */
-  JWT_AUDIENCE: z.string().min(1),
-  /** A replay of a just-rotated refresh token within this long is a retry, not theft. */
-  REFRESH_REUSE_GRACE_MS: refreshReuseGraceMsSchema,
-  CORS_ORIGINS: originListSchema,
-  JSON_BODY_LIMIT: z.string().regex(BODY_LIMIT_PATTERN).default(DEFAULT_JSON_BODY_LIMIT),
-  SHUTDOWN_TIMEOUT_MS: z.coerce
-    .number()
-    .int()
-    .min(MIN_SHUTDOWN_TIMEOUT_MS)
-    .max(MAX_SHUTDOWN_TIMEOUT_MS)
-    .default(DEFAULT_SHUTDOWN_TIMEOUT_MS),
+/** Most verify-only keys that may be published next to the signing key (a retiring and an upcoming one, with room to spare). */
+const MAX_ADDITIONAL_PUBLIC_KEYS = 3;
+const PUBLIC_KEY_PEM_HEADER = '-----BEGIN PUBLIC KEY-----';
+const INVALID_PUBLIC_KEY_MESSAGE =
+  'must be a base64-encoded SPKI PEM of an Ed25519 public key (a private key is not allowed here)';
+const DUPLICATE_PUBLIC_KEY_MESSAGE = 'duplicates the signing key or another listed key';
+
+/**
+ * One `JWT_ADDITIONAL_PUBLIC_KEYS` entry: base64 of an SPKI PEM. The `BEGIN PUBLIC KEY` header is
+ * required, so a private key pasted here by mistake is refused instead of silently reduced to its
+ * public half. The message is fixed text, so key material never reaches an error or a log.
+ */
+const ed25519PublicKeySchema = z.string().transform((encoded, context): KeyObject => {
+  try {
+    const pem = Buffer.from(encoded, 'base64').toString('utf8').trim();
+    if (pem.startsWith(PUBLIC_KEY_PEM_HEADER)) {
+      const key = createPublicKey(pem);
+      if (key.asymmetricKeyType === 'ed25519') {
+        return key;
+      }
+    }
+  } catch {
+    // Fall through to the single generic issue below; the parser's message may echo the input.
+  }
+  context.addIssue({ code: 'custom', message: INVALID_PUBLIC_KEY_MESSAGE });
+  return z.NEVER;
 });
+
+/** `JWT_ADDITIONAL_PUBLIC_KEYS`: comma-separated entries, empty by default. Base64 has no commas. */
+const additionalPublicKeysSchema = z
+  .string()
+  .default('')
+  .transform((value) =>
+    value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== ''),
+  )
+  .pipe(z.array(ed25519PublicKeySchema).max(MAX_ADDITIONAL_PUBLIC_KEYS));
+
+/**
+ * @param publicKey - An Ed25519 public key.
+ * @returns Its public bytes as base64url, to compare two keys without exposing either.
+ */
+function identifyPublicKey(publicKey: KeyObject): string {
+  return publicKey.export({ format: 'jwk' }).x ?? '';
+}
+
+export const authConfigSchema = baseConfigSchema
+  .extend({
+    DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+    REDIS_URL: z.url({ protocol: /^rediss?$/ }),
+    /** Access-token signing key. Only auth-service holds it; verifiers get the public key. */
+    JWT_PRIVATE_KEY: ed25519PrivateKeySchema,
+    /**
+     * Extra public keys published in the JWKS but never used to sign: a retiring key whose tokens
+     * have not all expired, or an upcoming key published ahead of its first use (rotation runbook).
+     */
+    JWT_ADDITIONAL_PUBLIC_KEYS: additionalPublicKeysSchema,
+    /** The `iss` claim verifiers must require. */
+    JWT_ISSUER: z.string().min(1),
+    /** The `aud` claim verifiers must require. */
+    JWT_AUDIENCE: z.string().min(1),
+    /** A replay of a just-rotated refresh token within this long is a retry, not theft. */
+    REFRESH_REUSE_GRACE_MS: refreshReuseGraceMsSchema,
+    CORS_ORIGINS: originListSchema,
+    JSON_BODY_LIMIT: z.string().regex(BODY_LIMIT_PATTERN).default(DEFAULT_JSON_BODY_LIMIT),
+    SHUTDOWN_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(MIN_SHUTDOWN_TIMEOUT_MS)
+      .max(MAX_SHUTDOWN_TIMEOUT_MS)
+      .default(DEFAULT_SHUTDOWN_TIMEOUT_MS),
+  })
+  .superRefine((config, context) => {
+    // Rejects the same public key listed twice, or listed next to the signing key it belongs to.
+    const seen = new Set([identifyPublicKey(createPublicKey(config.JWT_PRIVATE_KEY))]);
+    config.JWT_ADDITIONAL_PUBLIC_KEYS.forEach((publicKey, index) => {
+      const identity = identifyPublicKey(publicKey);
+      if (seen.has(identity)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['JWT_ADDITIONAL_PUBLIC_KEYS', index],
+          message: DUPLICATE_PUBLIC_KEY_MESSAGE,
+        });
+      }
+      seen.add(identity);
+    });
+  });
 
 export type AuthConfig = z.infer<typeof authConfigSchema>;

@@ -27,10 +27,11 @@ const AccessTokenPayload = z.looseObject({
 });
 
 export interface EdDsaAccessTokenVerifierOptions {
-  /** The Ed25519 public key that matches the signing key. */
-  readonly publicKey: KeyObject;
-  /** The only `kid` accepted. A key set arrives with the JWKS endpoint. */
-  readonly keyId: string;
+  /**
+   * Public keys by `kid`: the same map the JWKS endpoint publishes, so the two cannot disagree.
+   * A token naming any other `kid` is refused.
+   */
+  readonly verificationKeys: ReadonlyMap<string, KeyObject>;
   readonly issuer: string;
   readonly audience: string;
   /** Clock, replaceable in tests. */
@@ -39,19 +40,23 @@ export interface EdDsaAccessTokenVerifierOptions {
 
 /**
  * Temporary access-token verifier for auth-service's own routes, built on `jose`. It accepts only
- * `EdDSA`, one configured `kid`, and the configured issuer and audience. The shared
+ * `EdDSA`, a `kid` from the published key set, and the configured issuer and audience. The shared
  * `packages/auth-middleware` replaces it.
  */
 export class EdDsaAccessTokenVerifier implements AccessTokenVerifier {
   private readonly now: () => Date;
 
   /**
-   * @param options - Public key, key id, issuer, audience and optional clock.
-   * @throws TypeError when `publicKey` is not an Ed25519 public key.
+   * @param options - Verification keys by `kid`, issuer, audience and optional clock.
+   * @throws TypeError when there are no keys or any key is not an Ed25519 public key.
    */
   constructor(private readonly options: EdDsaAccessTokenVerifierOptions) {
-    if (options.publicKey.type !== 'public' || options.publicKey.asymmetricKeyType !== 'ed25519') {
-      throw new TypeError('The verification key must be an Ed25519 public key.');
+    const keys = [...options.verificationKeys.values()];
+    if (
+      keys.length === 0 ||
+      keys.some((key) => key.type !== 'public' || key.asymmetricKeyType !== 'ed25519')
+    ) {
+      throw new TypeError('The verification keys must be a non-empty set of Ed25519 public keys.');
     }
     this.now = options.now ?? (() => new Date());
   }
@@ -65,9 +70,9 @@ export class EdDsaAccessTokenVerifier implements AccessTokenVerifier {
    * @throws InvalidAccessTokenError for every invalid token.
    */
   async verify(token: string): Promise<AuthenticatedPrincipal> {
-    this.assertAlgorithmAndKeyId(token);
+    const verificationKey = this.selectVerificationKey(token);
     try {
-      const { payload } = await jwtVerify(token, this.options.publicKey, {
+      const { payload } = await jwtVerify(token, verificationKey, {
         algorithms: [ACCESS_TOKEN_ALGORITHM],
         issuer: this.options.issuer,
         audience: this.options.audience,
@@ -81,13 +86,14 @@ export class EdDsaAccessTokenVerifier implements AccessTokenVerifier {
   }
 
   /**
-   * Refuses a token whose header names another algorithm or key before any signature work, so
-   * `none`, HMAC and RSA tokens never reach the verifier.
+   * Refuses a token whose header names another algorithm or an unknown key before any signature
+   * work, so `none`, HMAC and RSA tokens never reach the verifier, then picks the key its `kid` names.
    *
    * @param token - The compact JWT.
-   * @throws InvalidAccessTokenError when the header is unreadable, or names another `alg` or `kid`.
+   * @returns The public key to verify the signature with.
+   * @throws InvalidAccessTokenError when the header is unreadable, or names another `alg` or an unknown `kid`.
    */
-  private assertAlgorithmAndKeyId(token: string): void {
+  private selectVerificationKey(token: string): KeyObject {
     let header: ReturnType<typeof decodeProtectedHeader>;
     try {
       header = decodeProtectedHeader(token);
@@ -97,9 +103,12 @@ export class EdDsaAccessTokenVerifier implements AccessTokenVerifier {
     if (header.alg !== ACCESS_TOKEN_ALGORITHM) {
       throw new InvalidAccessTokenError('unsupported_algorithm');
     }
-    if (header.kid !== this.options.keyId) {
+    const verificationKey =
+      typeof header.kid === 'string' ? this.options.verificationKeys.get(header.kid) : undefined;
+    if (verificationKey === undefined) {
       throw new InvalidAccessTokenError('unknown_key_id');
     }
+    return verificationKey;
   }
 
   /**

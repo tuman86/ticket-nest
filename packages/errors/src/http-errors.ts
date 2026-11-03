@@ -32,6 +32,13 @@ const NOT_FOUND: AppErrorDefinition = {
   problemType: PROBLEM_TYPE_SLUGS.notFound,
 };
 
+const METHOD_NOT_ALLOWED: AppErrorDefinition = {
+  status: 405,
+  code: 'METHOD_NOT_ALLOWED',
+  title: 'Method not allowed',
+  problemType: PROBLEM_TYPE_SLUGS.methodNotAllowed,
+};
+
 const CONFLICT: AppErrorDefinition = {
   status: 409,
   code: 'CONFLICT',
@@ -80,6 +87,20 @@ export class ForbiddenError extends AppError {
 export class NotFoundError extends AppError {
   constructor(options: AppErrorOptions = {}) {
     super(NOT_FOUND, options);
+  }
+}
+
+/** 405: the path exists but not for this HTTP method. Sends an `Allow` header (RFC 9110). */
+export class MethodNotAllowedError extends AppError {
+  /**
+   * @param allowedMethods - Methods the path accepts, such as `['GET', 'HEAD']`.
+   * @param options - Optional detail, cause and extra headers.
+   */
+  constructor(allowedMethods: readonly string[], options: AppErrorOptions = {}) {
+    super(METHOD_NOT_ALLOWED, {
+      ...options,
+      headers: { ...options.headers, Allow: allowedMethods.join(', ') },
+    });
   }
 }
 
