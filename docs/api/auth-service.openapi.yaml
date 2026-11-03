@@ -21,11 +21,12 @@ info:
       (operator users only), `auth_time` (Unix seconds of the last password login;
       a refresh keeps it unchanged), `iss`, `aud`, `iat`, `exp` and `jti` (unique per
       token). The `kid` header names the signing key.
-    * **Refresh token** - opaque, rotated on every use. Re-use of an already
-      rotated token revokes the whole token family (`refresh-token-reuse`), except
-      for a retry within 10 seconds of the rotation, which returns the same
-      successor. A token expires after 7 days idle and never outlives the session's
-      absolute limit of 30 days from login.
+    * **Refresh token** - opaque, rotated on every use. Replaying an already
+      rotated token revokes the whole token family, except for a replay within 10
+      seconds of the rotation (a retry or a second tab): that replay gets the
+      standard `401` and the family is left alone. The successor is never returned
+      a second time, because only its hash is stored. A token expires after 7 days
+      idle and never outlives the session's absolute limit of 30 days from login.
     * **Recent login** - operations marked `x-recent-login: true` require
       `auth_time` to be at most 5 minutes old. Otherwise they answer
       `reauthentication-required`; signing in again via `/v1/auth/login` issues a
@@ -47,8 +48,7 @@ info:
     | type (suffix)             | status | meaning |
     |---------------------------|--------|---------|
     | `invalid-credentials`     | 401 | wrong email or password, unknown email, or a disabled account (all answered identically) |
-    | `invalid-refresh-token`   | 401 | refresh token unknown, expired, or revoked |
-    | `refresh-token-reuse`     | 401 | rotated token replayed after the grace window; the session family was revoked |
+    | `invalid-refresh-token`   | 401 | refresh token unknown, expired, revoked, already used, past the 30-day session limit, or its user is disabled (all answered identically) |
     | `reauthentication-required` | 401 | the operation needs a password login within the last 5 minutes |
     | `email-already-registered`| 409 | an account with this email exists |
     | `invalid-otp`             | 422 | code wrong or expired |
@@ -234,12 +234,17 @@ paths:
       operationId: refreshTokens
       summary: Exchange a refresh token for a new token pair
       description: |
-        Rotates the refresh token. The submitted token becomes invalid. Replaying
-        an already rotated token revokes the entire token family and returns
-        `refresh-token-reuse`, unless the replay arrives within 10 seconds of the
-        rotation (a retry or a second tab), in which case the existing successor is
-        returned. The new token keeps the original `auth_time` and cannot extend the
-        session past 30 days from login.
+        Rotates the refresh token. The submitted token becomes invalid and a new one
+        in the same token family is returned. Replaying an already rotated token
+        revokes the entire token family, unless the replay arrives within 10 seconds
+        of the rotation (a retry or a second tab). That replay is answered with the
+        same `401` and the family is left alone; the new token is never returned a
+        second time. Of several simultaneous requests with the same token, exactly
+        one succeeds. Every failure is the same `invalid-refresh-token` problem, so
+        the response never tells a caller why the token was refused. The role and
+        `tenantId` in the new access token are read from the database. The new token
+        keeps the original `auth_time` and cannot extend the session past 30 days
+        from login.
       security: []
       parameters:
         - $ref: './common.yaml#/components/parameters/RequestId'
@@ -251,12 +256,18 @@ paths:
       responses:
         '200':
           description: New token pair.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+              description: The response carries tokens and must never be cached.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TokenPair' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
         '401':
-          description: '`invalid-refresh-token` or `refresh-token-reuse`.'
+          description: >-
+            `invalid-refresh-token`. The same problem for an unknown, expired, revoked
+            or already used token, a session past its limit, and a disabled user.
           content:
             application/problem+json:
               schema: { $ref: './common.yaml#/components/schemas/Problem' }
@@ -930,7 +941,7 @@ components:
       required: [refreshToken]
       additionalProperties: false
       properties:
-        refreshToken: { type: string, minLength: 1 }
+        refreshToken: { type: string, minLength: 1, maxLength: 128 }
 
     TokenRequest:
       type: object
