@@ -22,6 +22,14 @@ A service must change its own data and tell the others about it. Writing to the 
 
 The row follows §8.1 with one change (§8.1 is updated to match): the **payload is the whole envelope**, and there is no separate `headers` column. The relay publishes the payload as is, so the message on the bus is exactly what the schema accepted and no code has to rebuild an envelope from columns that could drift from it. `id` is the event id, so the outbox row, the AMQP message id and a consumer's inbox key are the same value. `aggregate_type` is the first segment of the event type (`user` for `user.registered`). `aggregate_id`, `aggregate_version` and `type` repeat envelope values so the relay can order and filter without opening the JSON. The store adds `created_at`, `published_at` and `attempts`.
 
+### First use: auth-service `user.registered`
+
+- `PrismaOutboxRepository` implements `OutboxStore` over the `outbox` table (migration `add_outbox`). It has no client of its own and writes only through the client bound to the transaction it is given, so a row cannot be committed apart from its state change. A handle that did not come from `PrismaUnitOfWork` is refused with a `TypeError` before anything is written.
+- `RegisterService` calls `UserRegisteredEventRecorder.record(tx, user, role)` inside the same `unitOfWork.run` as `userRepository.create`. If the event cannot be written, the user is not created and the request answers 500.
+- The table has a unique index on `(aggregate_type, aggregate_id, aggregate_version)`, which keeps one event per aggregate version, and a plain index on `(published_at, created_at)` for the relay. A partial index (`WHERE published_at IS NULL`) would be smaller, but Prisma cannot express it, so `migrate dev` would report drift. Revisit if the table grows.
+- The correlation id is the request's `X-Request-Id`, which `handleRequestId` accepts only as 1 to 128 word characters, dots or hyphens, so the value stored is bounded at the source.
+- Rows stay unpublished until the relay exists.
+
 ### Still open (not decided here)
 
 - Relay: polling `FOR UPDATE SKIP LOCKED`, publisher confirms, per-aggregate ordering, retries and the janitor (§8.1).

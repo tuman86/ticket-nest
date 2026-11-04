@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { USER_REGISTERED_EVENT_TYPE, UserRegisteredData, UserRegisteredEvent } from '@/index';
+import {
+  USER_REGISTERED_EVENT_TYPE,
+  USER_REGISTERED_EVENT_VERSION,
+  UserRegisteredData,
+  UserRegisteredEvent,
+} from '@/index';
 
 const USER_ID = '0b9c5b0e-6a0d-4c2b-9d5e-3f1d6a7c8e90';
 const EVENT_ID = '5d0f8f55-3d1c-4b0a-8a53-2f7b9c1e4a11';
@@ -25,6 +30,16 @@ function buildValidEvent(overrides: Record<string, unknown> = {}): Record<string
 describe('USER_REGISTERED_EVENT_TYPE', () => {
   it('is the catalogue name from docs/architecture.md section 6.3', () => {
     expect(USER_REGISTERED_EVENT_TYPE).toBe('user.registered');
+  });
+});
+
+describe('USER_REGISTERED_EVENT_VERSION', () => {
+  it('is the one version the schema accepts', () => {
+    expect(USER_REGISTERED_EVENT_VERSION).toBe(1);
+    expect(
+      UserRegisteredEvent.safeParse(buildValidEvent({ version: USER_REGISTERED_EVENT_VERSION }))
+        .success,
+    ).toBe(true);
   });
 });
 

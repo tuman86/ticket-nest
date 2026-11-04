@@ -732,6 +732,9 @@ importers:
       '@ticketnest/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@ticketnest/messaging':
+        specifier: workspace:*
+        version: link:../../packages/messaging
       '@ticketnest/rate-limit':
         specifier: workspace:*
         version: link:../../packages/rate-limit

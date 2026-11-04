@@ -19,6 +19,7 @@ import { createPassThroughRateLimiters } from './pass-through-rate-limiters';
 import { type TestClock } from './test-clock';
 import { type TestDatabase } from './test-database';
 import { TEST_AUDIENCE, TEST_ISSUER, TEST_KEY_ID, type TestSigningKeys } from './test-signing-keys';
+import { createDatabaseUserRegisteredRecorder } from './create-user-registered-event-recorder';
 
 export const INTEGRATION_REUSE_GRACE_MS = 10_000;
 
@@ -60,6 +61,7 @@ export async function createIntegrationAuthApp(
             unitOfWork: database.unitOfWork,
             passwordHasher: hasher,
             breachedPasswordChecker: new DenylistBreachedPasswordChecker(),
+            userRegisteredEventRecorder: createDatabaseUserRegisteredRecorder(database),
             logger,
           }),
           loginService: new LoginService({

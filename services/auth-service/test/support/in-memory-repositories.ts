@@ -253,3 +253,19 @@ export class RollbackUnitOfWork implements UnitOfWork {
     }
   }
 }
+
+/**
+ * `UnitOfWork` that gives every run its own new handle and remembers it, so a test can check that
+ * the handle a service passes on is the one this unit of work opened.
+ */
+export class HandleRecordingUnitOfWork implements UnitOfWork {
+  /** The handle given to each run, in order. */
+  readonly handles: Transaction[] = [];
+
+  /** @inheritdoc */
+  run<Result>(work: (tx: Transaction) => Promise<Result>): Promise<Result> {
+    const handle: Transaction = { isTransaction: true };
+    this.handles.push(handle);
+    return work(handle);
+  }
+}

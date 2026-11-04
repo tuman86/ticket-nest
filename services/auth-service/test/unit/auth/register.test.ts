@@ -1,4 +1,4 @@
-import { UserResponse } from '@ticketnest/contracts';
+import { UserRegisteredEvent, UserResponse } from '@ticketnest/contracts';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +7,11 @@ import {
   type RegisterTestApp,
 } from '../../support/create-register-test-app';
 import { EmailAlreadyRegisteredError } from '@/users/email-already-registered.error';
+import { FailingOutboxStore } from '../../support/failing-outbox-store';
+import {
+  HandleRecordingUnitOfWork,
+  RollbackUnitOfWork,
+} from '../../support/in-memory-repositories';
 
 const REGISTER_PATH = '/v1/auth/register';
 const PROBLEM_BASE = 'https://api.ticketnest.example/problems/';
@@ -301,5 +306,80 @@ describe('POST /v1/auth/register: invalid body', () => {
     const response = await request(testApp.app).get(REGISTER_PATH);
 
     expect(response.status).toBe(404);
+  });
+});
+
+describe('POST /v1/auth/register: user.registered event', () => {
+  it('writes one user.registered outbox row for the new user', async () => {
+    const response = await register(validBody);
+
+    const [row, ...others] = testApp.outbox.rows;
+    expect(others).toHaveLength(0);
+    const user = UserResponse.parse(response.body);
+    expect(row).toMatchObject({ type: 'user.registered', aggregateId: user.id });
+    expect(UserRegisteredEvent.safeParse(row?.payload).success).toBe(true);
+  });
+
+  it('stores exactly the user id, the role key and the registration time as data', async () => {
+    await register(validBody);
+
+    const data = testApp.outbox.rows[0]?.payload.data as Record<string, unknown>;
+    expect(Object.keys(data).sort()).toEqual(['registeredAt', 'roleKey', 'userId']);
+    expect(data).toMatchObject({ roleKey: 'CUSTOMER' });
+  });
+
+  it('keeps the email, name, phone, password and hash out of the outbox row', async () => {
+    await register(validBody);
+
+    const stored = JSON.stringify(testApp.outbox.rows).toLowerCase();
+    for (const secret of ['asha', 'rao', '9876543210', PASSWORD, 'argon2', 'password']) {
+      expect(stored).not.toContain(secret.toLowerCase());
+    }
+  });
+
+  it('uses the request id of the call as the correlation id of the event', async () => {
+    await register(validBody).set('X-Request-Id', 'req-abc-123');
+
+    expect(testApp.outbox.rows[0]?.payload.correlationId).toBe('req-abc-123');
+  });
+
+  it('writes no event when the email is already registered', async () => {
+    await register(validBody);
+    testApp.outbox.rows.length = 0;
+
+    const response = await register(validBody);
+
+    expect(response.status).toBe(409);
+    expect(testApp.outbox.rows).toHaveLength(0);
+  });
+
+  it('writes no event when the body is invalid', async () => {
+    const response = await register({ email: 'not-an-email' });
+
+    expect(response.status).toBe(422);
+    expect(testApp.outbox.rows).toHaveLength(0);
+  });
+
+  it('creates no user when the outbox write fails, and answers 500', async () => {
+    const failing = createRegisterTestApp({
+      outboxStore: new FailingOutboxStore(),
+      buildUnitOfWork: (users) => new RollbackUnitOfWork([users]),
+    });
+
+    const response = await request(failing.app).post(REGISTER_PATH).send(validBody);
+
+    expect(response.status).toBe(500);
+    expect(failing.users.all()).toHaveLength(0);
+  });
+
+  it('writes the event with the handle the unit of work opened, not another one', async () => {
+    const unitOfWork = new HandleRecordingUnitOfWork();
+    const recording = createRegisterTestApp({ buildUnitOfWork: () => unitOfWork });
+
+    await request(recording.app).post(REGISTER_PATH).send(validBody);
+
+    expect(unitOfWork.handles).toHaveLength(1);
+    expect(recording.outbox.transactions).toHaveLength(1);
+    expect(recording.outbox.transactions[0]).toBe(unitOfWork.handles[0]);
   });
 });

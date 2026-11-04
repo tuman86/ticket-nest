@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { type PrismaClient } from '@/generated/prisma/client';
 import { createPrismaClient } from '@/repositories/create-prisma-client';
 import { PrismaRefreshTokenRepository } from '@/repositories/prisma-refresh-token.repository';
+import { PrismaOutboxRepository } from '@/repositories/prisma-outbox.repository';
 import { PrismaRoleRepository } from '@/repositories/prisma-role.repository';
 import { PrismaUnitOfWork } from '@/repositories/prisma-unit-of-work';
 import { PrismaUserRepository } from '@/repositories/prisma-user.repository';
@@ -20,6 +21,7 @@ export interface TestDatabase {
   readonly unitOfWork: PrismaUnitOfWork;
   readonly userRepository: PrismaUserRepository;
   readonly roleRepository: PrismaRoleRepository;
+  readonly outboxRepository: PrismaOutboxRepository;
   readonly refreshTokenRepository: PrismaRefreshTokenRepository;
   /**
    * Empties the tables tests write to. The seeded roles are kept.
@@ -52,9 +54,10 @@ export function createTestDatabase(databaseUrl: string): TestDatabase {
     unitOfWork: new PrismaUnitOfWork(prisma),
     userRepository: new PrismaUserRepository(prisma),
     roleRepository: new PrismaRoleRepository(prisma),
+    outboxRepository: new PrismaOutboxRepository(),
     refreshTokenRepository: new PrismaRefreshTokenRepository(prisma),
     async resetTables() {
-      await pool.query('TRUNCATE TABLE refresh_tokens, users CASCADE');
+      await pool.query('TRUNCATE TABLE refresh_tokens, outbox, users CASCADE');
     },
     async findRoleId(key) {
       const role = await prisma.role.findUniqueOrThrow({ where: { key } });

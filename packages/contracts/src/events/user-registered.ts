@@ -7,6 +7,9 @@ import { EventEnvelope } from './envelope';
 /** Catalogue name of the event (docs/architecture.md section 6.3). Also its routing key. */
 export const USER_REGISTERED_EVENT_TYPE = 'user.registered';
 
+/** Schema version of `user.registered`. Producers stamp it on the envelope; the schema accepts only this one. */
+export const USER_REGISTERED_EVENT_VERSION = 1;
+
 /**
  * Payload of `user.registered`: identifiers only.
  *
@@ -33,7 +36,7 @@ export type UserRegisteredData = z.infer<typeof UserRegisteredData>;
  */
 export const UserRegisteredEvent = EventEnvelope.extend({
   type: z.literal(USER_REGISTERED_EVENT_TYPE),
-  version: z.literal(1),
+  version: z.literal(USER_REGISTERED_EVENT_VERSION),
   data: UserRegisteredData,
 }).refine((event) => event.aggregateId === event.data.userId, {
   path: ['aggregateId'],
