@@ -4,7 +4,7 @@ import { Id, Timestamp } from '../common';
 
 /**
  * Envelope shared by every event on the bus (docs/architecture.md section 6.2).
- * Concrete events refine `data` and `type`; none are defined yet.
+ * Concrete events refine `data`, `type` and `version` (see `UserRegisteredEvent`).
  */
 export const EventEnvelope = z.object({
   id: Id,
