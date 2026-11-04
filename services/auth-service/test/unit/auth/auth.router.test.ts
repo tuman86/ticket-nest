@@ -1,17 +1,19 @@
+import {
+  RATE_LIMIT_UNAVAILABLE_RETRY_AFTER_SECONDS,
+  type RateLimitPolicy,
+} from '@ticketnest/rate-limit';
+import { InMemoryRateLimiter } from '@ticketnest/rate-limit/testing';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { RATE_LIMIT_UNAVAILABLE_RETRY_AFTER_SECONDS } from '@/rate-limit/rate-limit-constants';
 import {
   LOGIN_POLICY,
   LOGOUT_POLICY,
   REFRESH_POLICY,
   REGISTER_POLICY,
-  type RateLimitPolicy,
 } from '@/rate-limit/rate-limit-policies';
 
 import { createAuthTestApp, type AuthTestApp } from '../../support/create-auth-test-app';
-import { InMemoryRateLimiter } from '../../support/in-memory-rate-limiter';
 
 /**
  * Reads how many requests one IP may send per window under a policy.

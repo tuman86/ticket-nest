@@ -1,34 +1,20 @@
 import { createPrivateKey, createPublicKey, type KeyObject } from 'node:crypto';
 
-import { baseConfigSchema, refreshReuseGraceMsSchema } from '@ticketnest/config';
+import {
+  baseConfigSchema,
+  originListSchema,
+  refreshReuseGraceMsSchema,
+  shutdownTimeoutMsSchema,
+  trustProxyHopsSchema,
+} from '@ticketnest/config';
 import { z } from 'zod';
 
 export const SERVICE_NAME = 'auth-service';
 
 const DEFAULT_JSON_BODY_LIMIT = '100kb';
-const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
-const MIN_SHUTDOWN_TIMEOUT_MS = 1_000;
-const MAX_SHUTDOWN_TIMEOUT_MS = 120_000;
-const MAX_TRUST_PROXY_HOPS = 10;
 /** A pepper shorter than this is easier to guess than the emails it is meant to protect. */
 const RATE_LIMIT_PEPPER_MIN_LENGTH = 32;
 const BODY_LIMIT_PATTERN = /^\d+(b|kb|mb)$/i;
-
-function isOrigin(value: string): boolean {
-  return URL.canParse(value) && new URL(value).origin === value;
-}
-
-/** `https://a.example, https://b.example` -> list. Empty means no origin is allowed. */
-const originListSchema = z
-  .string()
-  .default('')
-  .transform((value) =>
-    value
-      .split(',')
-      .map((origin) => origin.trim())
-      .filter((origin) => origin !== ''),
-  )
-  .pipe(z.array(z.string().refine(isOrigin, 'must be an origin such as https://example.com')));
 
 const INVALID_PRIVATE_KEY_MESSAGE = 'must be a base64-encoded PKCS#8 PEM of an Ed25519 private key';
 
@@ -128,15 +114,10 @@ export const authConfigSchema = baseConfigSchema
      * Reverse proxies in front of the service whose `X-Forwarded-For` is trusted for the client
      * IP. 0 (default) uses the socket address, so a client cannot spoof its IP; 1 behind the gateway.
      */
-    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(MAX_TRUST_PROXY_HOPS).default(0),
+    TRUST_PROXY_HOPS: trustProxyHopsSchema,
     CORS_ORIGINS: originListSchema,
     JSON_BODY_LIMIT: z.string().regex(BODY_LIMIT_PATTERN).default(DEFAULT_JSON_BODY_LIMIT),
-    SHUTDOWN_TIMEOUT_MS: z.coerce
-      .number()
-      .int()
-      .min(MIN_SHUTDOWN_TIMEOUT_MS)
-      .max(MAX_SHUTDOWN_TIMEOUT_MS)
-      .default(DEFAULT_SHUTDOWN_TIMEOUT_MS),
+    SHUTDOWN_TIMEOUT_MS: shutdownTimeoutMsSchema,
   })
   .superRefine((config, context) => {
     // Rejects the same public key listed twice, or listed next to the signing key it belongs to.

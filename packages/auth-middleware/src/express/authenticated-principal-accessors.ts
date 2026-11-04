@@ -19,6 +19,16 @@ export function setAuthenticatedPrincipal(
 }
 
 /**
+ * Reads who the request is from, for a route that also serves anonymous callers.
+ *
+ * @param response - The response of the current request.
+ * @returns The verified caller, or `undefined` when the request was anonymous.
+ */
+export function findAuthenticatedPrincipal(response: Response): AuthenticatedPrincipal | undefined {
+  return response.locals[PRINCIPAL_LOCALS_KEY] as AuthenticatedPrincipal | undefined;
+}
+
+/**
  * Reads who the request is from. The only thing a controller needs from authentication, so the
  * verifier behind the middleware can be replaced without touching controllers.
  *

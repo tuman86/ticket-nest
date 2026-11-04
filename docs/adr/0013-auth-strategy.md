@@ -128,7 +128,7 @@ Risky actions require a recent password login, instead of shortening every token
 
 ### Rate limiting
 
-Register, login, refresh and logout are limited by a Redis-backed fixed-window limiter in auth-service (`src/rate-limit/`). The shape is controller (middleware) -> `RateLimitService` -> `RateLimiter` interface, with the Redis class named only in `server.ts`.
+Register, login, refresh and logout are limited by a Redis-backed fixed-window limiter, shared with the gateway through `packages/rate-limit`. The shape is controller (middleware) -> `RateLimitService` -> `RateLimiter` interface, with the Redis class named only in `server.ts`. auth-service keeps its policies, numbers and the reading of the email and refresh token from the body in `src/rate-limit/`.
 
 | Endpoint | IP limit | Account limit | Window | If Redis is down |
 |---|---|---|---|---|
@@ -141,7 +141,7 @@ Register, login, refresh and logout are limited by a Redis-backed fixed-window l
 - **Two independent counters.** The IP rule is checked first and checking stops at the first denial, so a blocked IP cannot use up a victim's email counter. A request with no usable email (a malformed body) is counted by IP only and then gets its normal 422. A request with no known IP shares one `unknown` bucket.
 - **Keys.** The IP is stored as is. The email (trimmed, lower-cased, like stored accounts) and the refresh token are stored as HMAC-SHA256 with a server-side secret (`RATE_LIMIT_KEY_PEPPER`, at least 32 characters), so Redis holds neither in plaintext and a dump cannot be matched against a list of emails. Logs name the policy only, never a key or identifier.
 - **Failure modes.** Register and login fail closed: they are the enumeration and credential-stuffing targets, and each login costs an argon2id verify. Refresh and logout fail open: they need a secret token anyway, and failing them closed would sign everyone out during a Redis blip. A limiter call that takes longer than 500 ms counts as down.
-- **Client IP.** `TRUST_PROXY_HOPS` (default 0) sets Express `trust proxy`. At 0 the socket address is used, so a client that reaches the service directly cannot choose its IP; set 1 once the gateway is in front. The gateway's own limits are separate and will be layered on top.
+- **Client IP.** `TRUST_PROXY_HOPS` (default 0) sets Express `trust proxy`. At 0 the socket address is used, so a client that reaches the service directly cannot choose its IP; set 1 once the gateway is in front. The gateway layers its own limits on top (`services/api-gateway/src/rate-limit/`): 300 requests per minute per IP on every route before the token is checked, and 120 per minute per signed-in user after it, both failing open because auth-service keeps login and register fail-closed itself (starting values, to be tuned). The gateway sends each service a single `X-Forwarded-For` value, its own resolved `request.ip`, instead of appending to the client's chain, so every service keeps `TRUST_PROXY_HOPS=1` whatever sits in front of the gateway.
 - **Known limits.** An attacker can lock a victim's email out of login for up to 15 minutes by exceeding its counter; the per-email limit is generous enough to keep this short-lived. An IPv6 client with a /64 can rotate addresses, so the IPv6 counter should be keyed by /64 later. If the limiter proves too weak for registration, the always-`202` flow stays the fallback.
 
 ### Out of scope

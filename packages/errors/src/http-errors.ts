@@ -67,6 +67,20 @@ const SERVICE_UNAVAILABLE: AppErrorDefinition = {
   problemType: PROBLEM_TYPE_SLUGS.unavailable,
 };
 
+const BAD_GATEWAY: AppErrorDefinition = {
+  status: 502,
+  code: 'BAD_GATEWAY',
+  title: 'Bad gateway',
+  problemType: PROBLEM_TYPE_SLUGS.badGateway,
+};
+
+const GATEWAY_TIMEOUT: AppErrorDefinition = {
+  status: 504,
+  code: 'GATEWAY_TIMEOUT',
+  title: 'Gateway timeout',
+  problemType: PROBLEM_TYPE_SLUGS.gatewayTimeout,
+};
+
 const INTERNAL_SERVER_ERROR: AppErrorDefinition = {
   status: 500,
   code: 'INTERNAL_ERROR',
@@ -203,5 +217,31 @@ export class ServiceUnavailableError extends AppError {
       ...rest,
       headers: { 'Retry-After': String(retryAfterSeconds), ...rest.headers },
     });
+  }
+}
+
+/**
+ * 502: an upstream service could not be reached or answered with something unusable. Raised by the
+ * gateway. The response never carries `detail`, because the cause names an internal host.
+ */
+export class BadGatewayError extends AppError {
+  /**
+   * @param options - Optional code and cause. The cause is kept for the log only.
+   */
+  constructor(options: AppErrorOptions = {}) {
+    super(BAD_GATEWAY, options);
+  }
+}
+
+/**
+ * 504: an upstream service did not answer in time. Raised by the gateway. The response never
+ * carries `detail`.
+ */
+export class GatewayTimeoutError extends AppError {
+  /**
+   * @param options - Optional code and cause. The cause is kept for the log only.
+   */
+  constructor(options: AppErrorOptions = {}) {
+    super(GATEWAY_TIMEOUT, options);
   }
 }

@@ -1,12 +1,12 @@
+import { RateLimitService } from '@ticketnest/rate-limit';
+import { InMemoryRateLimiter } from '@ticketnest/rate-limit/testing';
 import { Router, type RequestHandler } from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 
 import { createAuthRateLimiters } from '@/auth/auth-rate-limiters';
-import { RateLimitService } from '@/rate-limit/rate-limit.service';
 
 import { createTestApp } from '../../support/create-test-app';
-import { InMemoryRateLimiter } from '../../support/in-memory-rate-limiter';
 
 const PEPPER = 'a-test-pepper-that-is-long-enough-1';
 

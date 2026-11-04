@@ -248,6 +248,9 @@ catalogs:
     typescript-eslint:
       specifier: ^8.72.1
       version: 8.72.1
+    undici:
+      specifier: 8.11.2
+      version: 8.11.2
     vitest:
       specifier: ^5.0.5
       version: 5.0.5
@@ -508,9 +511,132 @@ importers:
         specifier: 'catalog:'
         version: 5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  packages/rate-limit:
+    dependencies:
+      '@ticketnest/errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@ticketnest/logger':
+        specifier: workspace:*
+        version: link:../logger
+      ioredis:
+        specifier: 'catalog:'
+        version: 6.0.0
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+    devDependencies:
+      '@ticketnest/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@ticketnest/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/express':
+        specifier: 'catalog:'
+        version: 5.0.6
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      '@types/supertest':
+        specifier: 'catalog:'
+        version: 7.2.1
+      eslint:
+        specifier: 'catalog:'
+        version: 10.14.0(jiti@2.7.0)
+      express:
+        specifier: 'catalog:'
+        version: 5.3.0
+      supertest:
+        specifier: 'catalog:'
+        version: 7.3.1
+      testcontainers:
+        specifier: 'catalog:'
+        version: 12.2.1
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/service-runtime:
+    dependencies:
+      '@ticketnest/logger':
+        specifier: workspace:*
+        version: link:../logger
+      express:
+        specifier: 'catalog:'
+        version: 5.3.0
+    devDependencies:
+      '@ticketnest/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@ticketnest/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/express':
+        specifier: 'catalog:'
+        version: 5.0.6
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      '@types/supertest':
+        specifier: 'catalog:'
+        version: 7.2.1
+      eslint:
+        specifier: 'catalog:'
+        version: 10.14.0(jiti@2.7.0)
+      supertest:
+        specifier: 'catalog:'
+        version: 7.3.1
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
   packages/tsconfig: {}
 
   services/api-gateway:
+    dependencies:
+      '@ticketnest/auth-middleware':
+        specifier: workspace:*
+        version: link:../../packages/auth-middleware
+      '@ticketnest/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@ticketnest/errors':
+        specifier: workspace:*
+        version: link:../../packages/errors
+      '@ticketnest/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@ticketnest/rate-limit':
+        specifier: workspace:*
+        version: link:../../packages/rate-limit
+      '@ticketnest/service-runtime':
+        specifier: workspace:*
+        version: link:../../packages/service-runtime
+      cors:
+        specifier: 'catalog:'
+        version: 2.8.6
+      express:
+        specifier: 'catalog:'
+        version: 5.3.0
+      helmet:
+        specifier: 'catalog:'
+        version: 8.3.0
+      ioredis:
+        specifier: 'catalog:'
+        version: 6.0.0
+      undici:
+        specifier: 'catalog:'
+        version: 8.11.2
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
     devDependencies:
       '@ticketnest/eslint-config':
         specifier: workspace:*
@@ -518,12 +644,33 @@ importers:
       '@ticketnest/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
+      '@types/cors':
+        specifier: 'catalog:'
+        version: 2.8.19
+      '@types/express':
+        specifier: 'catalog:'
+        version: 5.0.6
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.6
+      '@types/supertest':
+        specifier: 'catalog:'
+        version: 7.2.1
+      esbuild:
+        specifier: 'catalog:'
+        version: 0.28.2
       eslint:
         specifier: 'catalog:'
         version: 10.14.0(jiti@2.7.0)
+      jose:
+        specifier: 'catalog:'
+        version: 6.2.15
+      supertest:
+        specifier: 'catalog:'
+        version: 7.3.1
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.15
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -554,6 +701,12 @@ importers:
       '@ticketnest/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@ticketnest/rate-limit':
+        specifier: workspace:*
+        version: link:../../packages/rate-limit
+      '@ticketnest/service-runtime':
+        specifier: workspace:*
+        version: link:../../packages/service-runtime
       cors:
         specifier: 'catalog:'
         version: 2.8.6
@@ -3323,6 +3476,10 @@ packages:
 
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
+
+  undici@8.11.2:
+    resolution: {integrity: sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==}
+    engines: {node: '>=22.19.0'}
 
   undici@8.12.3:
     resolution: {integrity: sha512-+fdndUTwBP86cVjihTp21hZHo7d6oj1c/47XPA3lL8mM0XHs+C4EkcjmgRsFnFk2f/UONGDy9ItBItmXsLOQHw==}
@@ -6202,6 +6359,8 @@ snapshots:
   undici-types@5.26.5: {}
 
   undici-types@8.9.0: {}
+
+  undici@8.11.2: {}
 
   undici@8.12.3: {}
 

@@ -1,9 +1,11 @@
 export { AppError, type AppErrorDefinition, type AppErrorOptions } from './app-error';
 export { fromZodError, type InputSource } from './from-zod-error';
 export {
+  BadGatewayError,
   BadRequestError,
   ConflictError,
   ForbiddenError,
+  GatewayTimeoutError,
   InternalServerError,
   MethodNotAllowedError,
   NotFoundError,

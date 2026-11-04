@@ -37,13 +37,10 @@ This list is the definition of the skeleton. Copy nothing else.
 cd services
 for file in \
   package.json tsconfig.json vitest.config.ts eslint.config.mjs Dockerfile .env.example \
-  src/app.ts src/config.ts src/server.ts src/shutdown.ts \
-  src/health/dependency-check.ts src/health/health.router.ts \
+  src/app.ts src/config.ts src/server.ts \
   src/health/postgres-check.ts src/health/redis-check.ts \
-  src/http/request-id.middleware.ts src/http/request-logger.middleware.ts \
   test/support/create-test-app.ts \
-  test/unit/config.test.ts test/unit/shutdown.test.ts \
-  test/unit/health/health.test.ts test/unit/http/app.test.ts; do
+  test/unit/config.test.ts test/unit/http/app.test.ts; do
   mkdir -p "<name>/$(dirname "$file")" && cp "auth-service/$file" "<name>/$file"
 done
 git rm -f <name>/src/index.ts   # the placeholder, if it is still there
@@ -67,15 +64,15 @@ Keep the `build` script exactly as in the template, including `--define:import.m
 
 Read each hit; do not blind-`sed` prose:
 
-| In auth-service                                   | Becomes                                                                                    |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `auth-service`                                    | `<name>` (package name, `SERVICE_NAME`, Dockerfile, test logger, comments)                 |
-| `authConfigSchema`                                | `<domain>ConfigSchema`                                                                     |
-| `AuthConfig`                                      | `<Domain>Config`                                                                           |
-| `4001`                                            | the chosen port                                                                            |
-| `auth_service:change-me-auth@localhost:5432/auth` | `<domain>_service:change-me-<domain>@localhost:5432/<domain>`                              |
-| `auth_service`, `auth` in test fixtures           | `<domain>_service`, `<domain>` (config and health tests use them as sample values)         |
-| `package.json` `description`                      | one line for this service, keep "Skeleton only: health endpoints, no business routes yet." |
+| In auth-service                                                | Becomes                                                                                    |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `auth-service`                                                 | `<name>` (package name, `SERVICE_NAME`, Dockerfile, test logger, comments)                 |
+| `authConfigSchema`                                             | `<domain>ConfigSchema`                                                                     |
+| `AuthConfig`                                                   | `<Domain>Config`                                                                           |
+| `4001`                                                         | the chosen port                                                                            |
+| `auth_service` and `auth` in the `DATABASE_URL` format comment | `<domain>_service` and `<domain>`                                                          |
+| `auth_service`, `auth` in test fixtures                        | `<domain>_service`, `<domain>` (config and health tests use them as sample values)         |
+| `package.json` `description`                                   | one line for this service, keep "Skeleton only: health endpoints, no business routes yet." |
 
 Keep `"type": "module"`, scripts (`dev`, `build`, `lint`, `typecheck`, `test`) and `catalog:` / `workspace:*` versions exactly as in the template. Never hard-code a version.
 
@@ -88,15 +85,13 @@ Every item must exist in `services/<name>/` (paths relative to it), and nothing 
 - [ ] `vitest.config.ts` (`@/` alias, `unit` project over `test/unit/**`)
 - [ ] `eslint.config.mjs` (`export default node` from `@ticketnest/eslint-config`; keep the `src/generated/**` ignore)
 - [ ] `Dockerfile` (filter name, `PORT`, `EXPOSE`, bundle path all renamed; no argon2 check)
-- [ ] `.env.example` (names and local placeholders only, matching `infra/docker/.env.example`)
+- [ ] `.env.example` (variable names and non-secret defaults only; a value that holds a password or key is left empty with a comment on its format, as in `security.md`)
 - [ ] `src/config.ts` (`SERVICE_NAME`, `<domain>ConfigSchema = baseConfigSchema.extend({...})`)
 - [ ] `src/app.ts` (`createApp(dependencies)`: no sockets, no clients; feature routers arrive via `routers`)
 - [ ] `src/server.ts` (composition root: the only file that names `Pool` / `Redis`; `loadConfig` first; no routers yet)
-- [ ] `src/shutdown.ts`
-- [ ] `src/health/` (`dependency-check.ts`, `health.router.ts`, plus one `*-check.ts` per real dependency)
-- [ ] `src/http/` (`request-id.middleware.ts`, `request-logger.middleware.ts`)
+- [ ] `src/health/` (one `*-check.ts` per real dependency; the `DependencyCheck` type, the health router, shutdown, the request id and the request logger come from `@ticketnest/service-runtime`, so `package.json` depends on it and `app.ts` and `server.ts` import from it)
 - [ ] `test/support/create-test-app.ts`
-- [ ] Tests (layout rule: `.claude/rules/testing.md`): `test/unit/config.test.ts`, `test/unit/shutdown.test.ts`, `test/unit/health/health.test.ts`, `test/unit/http/app.test.ts`
+- [ ] Tests (layout rule: `.claude/rules/testing.md`): `test/unit/config.test.ts`, `test/unit/http/app.test.ts` (the shutdown and health router tests live in `packages/service-runtime/test/`)
 - [ ] Root `.dockerignore` already covers all services; do not add per-service copies
 - [ ] `pnpm-workspace.yaml` `catalog:` has every dependency the copy uses (add a version there, never in the service)
 
@@ -128,14 +123,7 @@ pnpm format:check                               # prettier; do not run it over d
 node scripts/check-test-layout.mjs              # no test or helper under src/, tests in test/unit
 ```
 
-These files must stay byte-identical to the template. Any difference means the copy drifted or was edited by mistake:
-
-```sh
-for file in src/shutdown.ts src/health/dependency-check.ts src/health/health.router.ts \
-  src/http/request-id.middleware.ts src/http/request-logger.middleware.ts; do
-  diff -q services/auth-service/$file services/<name>/$file
-done
-```
+The shutdown, health router, request id and request logger are no longer copied: they come from `@ticketnest/service-runtime`. Confirm the copy did not bring its own versions back: `ls services/<name>/src` must show no `shutdown.ts` and no `http/request-*.middleware.ts`.
 
 Then prove the real thing starts, not just the tests:
 
@@ -178,5 +166,6 @@ A service that owns data adds its database layer as a **separate change**, not a
 
 ## Notes
 
-- The skeleton files (`shutdown.ts`, `health/`, `http/`) are identical in every service. `CLAUDE.md` says to copy the template, so copy. But `.claude/rules/code-quality.md` says logic used by two or more services belongs in `packages/*`. When this skill is run for the second service, tell the user and propose extracting those files into a shared package instead of making a third copy.
+- The code every service shares at runtime (shutdown, readiness checks, the health router, the request id and request logger middleware) lives in `packages/service-runtime`, per `.claude/rules/code-quality.md` (logic used by two or more services belongs in `packages/*`). Fix it there, never in a service. `services/api-gateway`, the second service, skipped `postgres-check.ts` (no data) and `redis-check.ts` (its limiter fails open, so Redis must not gate readiness), and has no body parser because it streams bodies. Its `app.ts` therefore differs from the template: no `jsonBodyLimit`, and the proxy router arrives through `routers`.
+- Schemas several services need (`originListSchema`, `trustProxyHopsSchema`, `shutdownTimeoutMsSchema`, `httpOriginSchema`) come from `@ticketnest/config`; do not copy them from a service's `config.ts`.
 - The file list in step 1a is the single definition of the skeleton. When `services/auth-service` gains a file that every service should share, add it to that list (and to the checklist); when a listed file stops being generic, remove it. Update this skill in the same change so the template and the skill do not drift.

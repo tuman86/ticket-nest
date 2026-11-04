@@ -1,0 +1,32 @@
+{
+  "name": "@ticketnest/service-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "What every Express service shares at runtime: graceful shutdown, readiness checks, the health router, request ids and the request logger.",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./express": "./src/express/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticketnest/logger": "workspace:*",
+    "express": "catalog:"
+  },
+  "devDependencies": {
+    "@ticketnest/eslint-config": "workspace:*",
+    "@ticketnest/tsconfig": "workspace:*",
+    "@types/express": "catalog:",
+    "@types/node": "catalog:",
+    "@types/supertest": "catalog:",
+    "eslint": "catalog:",
+    "supertest": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

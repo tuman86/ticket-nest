@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { type AccessTokenVerifier } from '@ticketnest/auth-middleware';
 import { createAuthenticateMiddleware } from '@ticketnest/auth-middleware/express';
 import { type Logger } from '@ticketnest/logger';
+import { type RateLimiter, RateLimitService } from '@ticketnest/rate-limit';
 import { type Router } from 'express';
 import { type Pool } from 'pg';
 
@@ -17,8 +18,6 @@ import { LogoutService } from './auth/logout.service';
 import { RefreshService } from './auth/refresh.service';
 import { RegisterService } from './auth/register.service';
 import { type TokenService } from './auth/token-service';
-import { type RateLimiter } from './rate-limit/rate-limiter';
-import { RateLimitService } from './rate-limit/rate-limit.service';
 import { createPrismaClient } from './repositories/create-prisma-client';
 import { PrismaRefreshTokenRepository } from './repositories/prisma-refresh-token.repository';
 import { PrismaRoleRepository } from './repositories/prisma-role.repository';
@@ -47,29 +46,49 @@ export interface ComposeAuthRouterOptions {
   readonly rateLimitKeyPepper: string;
 }
 
+/** The repositories and the unit of work, all backed by the one Prisma client. */
+interface Persistence {
+  readonly userRepository: PrismaUserRepository;
+  readonly roleRepository: PrismaRoleRepository;
+  readonly refreshTokenRepository: PrismaRefreshTokenRepository;
+  readonly unitOfWork: PrismaUnitOfWork;
+}
+
 /**
- * Part of the composition root (with `server.ts`): the only place that names the concrete
- * repositories, hasher and breached-password checker and connects them to the services.
+ * Builds the repositories over the service's pool.
+ *
+ * @param pool - The service's Postgres pool.
+ * @returns The repositories and the unit of work.
+ */
+function createPersistence(pool: Pool): Persistence {
+  const prisma = createPrismaClient(pool);
+  return {
+    userRepository: new PrismaUserRepository(prisma),
+    roleRepository: new PrismaRoleRepository(prisma),
+    refreshTokenRepository: new PrismaRefreshTokenRepository(prisma),
+    unitOfWork: new PrismaUnitOfWork(prisma),
+  };
+}
+
+/**
+ * Builds the authentication router: its services, rate limiters and the dummy hash.
  *
  * Makes the dummy hash that login verifies against for unknown emails. It is made here, once,
  * with the same hasher and so the same parameters as real hashes, from a random password that is
  * thrown away.
  *
- * @param options - The pool, logger, token service, access-token verifier, key set service, refresh
- *   grace window, rate limiter and its key pepper.
- * @returns The routers for the authentication endpoints, the signed-in user's endpoints and the key set.
+ * @param options - The composition options.
+ * @param persistence - The repositories and unit of work.
+ * @returns The router for register, login, refresh and logout.
  */
-export async function composeAuthRouter(
+async function createAuthEndpoints(
   options: ComposeAuthRouterOptions,
-): Promise<readonly Router[]> {
-  const { pool, logger, tokenService } = options;
-  const prisma = createPrismaClient(pool);
-  const userRepository = new PrismaUserRepository(prisma);
-  const roleRepository = new PrismaRoleRepository(prisma);
-  const unitOfWork = new PrismaUnitOfWork(prisma);
-  const refreshTokenRepository = new PrismaRefreshTokenRepository(prisma);
+  persistence: Persistence,
+): Promise<Router> {
+  const { logger, tokenService } = options;
+  const { userRepository, roleRepository, refreshTokenRepository, unitOfWork } = persistence;
   const passwordHasher = new Argon2idPasswordHasher();
-  const authRouter = createAuthRouter({
+  return createAuthRouter({
     rateLimiters: createAuthRateLimiters({
       rateLimitService: new RateLimitService({
         rateLimiter: options.rateLimiter,
@@ -108,9 +127,32 @@ export async function composeAuthRouter(
     }),
     logoutService: new LogoutService({ refreshTokenRepository, unitOfWork, logger }),
   });
+}
+
+/**
+ * Part of the composition root (with `server.ts`): the only place that names the concrete
+ * repositories, hasher and breached-password checker and connects them to the services.
+ *
+ * @param options - The pool, logger, token service, access-token verifier, key set service, refresh
+ *   grace window, rate limiter and its key pepper.
+ * @returns The routers for the authentication endpoints, the signed-in user's endpoints and the key set.
+ */
+export async function composeAuthRouter(
+  options: ComposeAuthRouterOptions,
+): Promise<readonly Router[]> {
+  const { logger } = options;
+  const persistence = createPersistence(options.pool);
   const usersRouter = createUsersRouter({
     authenticate: createAuthenticateMiddleware({ verifier: options.accessTokenVerifier, logger }),
-    getCurrentUserService: new GetCurrentUserService({ userRepository, roleRepository, logger }),
+    getCurrentUserService: new GetCurrentUserService({
+      userRepository: persistence.userRepository,
+      roleRepository: persistence.roleRepository,
+      logger,
+    }),
   });
-  return [authRouter, usersRouter, createJwksRouter({ jwksService: options.jwksService })];
+  return [
+    await createAuthEndpoints(options, persistence),
+    usersRouter,
+    createJwksRouter({ jwksService: options.jwksService }),
+  ];
 }

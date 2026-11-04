@@ -1,4 +1,4 @@
-import { type DependencyCheck } from './dependency-check';
+import { type DependencyCheck } from '@ticketnest/service-runtime';
 
 interface Pingable {
   ping: () => Promise<string>;

@@ -2,13 +2,10 @@ import { type Logger } from '@ticketnest/logger';
 import { type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 
 import { type AccessTokenVerifier } from '../access-token-verifier';
-import { AUTHORIZATION_HEADER_MAX_LENGTH } from '../access-token-constants';
 import { InvalidAccessTokenError } from '../invalid-access-token.error';
 
 import { setAuthenticatedPrincipal } from './authenticated-principal-accessors';
-
-/** `Bearer <token68>`: the scheme is case-insensitive, the token has no spaces (RFC 6750). */
-const BEARER_PATTERN = /^Bearer ([A-Za-z0-9\-._~+/]+=*)$/i;
+import { readBearerToken } from './read-bearer-token';
 
 export interface AuthenticateMiddlewareDependencies {
   readonly verifier: AccessTokenVerifier;
@@ -47,26 +44,4 @@ export function createAuthenticateMiddleware(
     }
     next();
   };
-}
-
-/**
- * Extracts the token from the `Authorization` header.
- *
- * @param request - The incoming request.
- * @returns The token text.
- * @throws InvalidAccessTokenError when the header is missing, too long or not `Bearer <token>`.
- */
-function readBearerToken(request: Request): string {
-  const header = request.headers.authorization;
-  if (header === undefined) {
-    throw new InvalidAccessTokenError('missing_header');
-  }
-  if (header.length > AUTHORIZATION_HEADER_MAX_LENGTH) {
-    throw new InvalidAccessTokenError('malformed_header');
-  }
-  const token = BEARER_PATTERN.exec(header)?.[1];
-  if (token === undefined) {
-    throw new InvalidAccessTokenError('malformed_header');
-  }
-  return token;
 }
