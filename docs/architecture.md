@@ -375,10 +375,12 @@ Every service that publishes events has an outbox:
 ```
 outbox(
   id uuid pk, aggregate_type, aggregate_id, aggregate_version,
-  type, payload jsonb, headers jsonb,
+  type, payload jsonb,
   created_at, published_at null, attempts int
 )
 ```
+
+`payload` is the whole event envelope (§6.2), so the relay publishes it as is and nothing is rebuilt from columns; `id` is the event id. There is no separate `headers` column (ADR-0007).
 
 - Rows are written **in the same database transaction** as the state change (Prisma `$transaction`). The shared helper takes the transaction client, so business code cannot publish without it.
 - **[Rec] Polling relay, in-process.** Select unpublished rows `FOR UPDATE SKIP LOCKED` in batches, publish with publisher confirms, then set `published_at`. Order per aggregate by `aggregate_version`. Several replicas can run the relay safely.
