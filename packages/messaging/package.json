@@ -1,0 +1,30 @@
+{
+  "name": "@ticketnest/messaging",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Event publishing for every service: the envelope builder, the transactional outbox writer, and the store and publisher interfaces the relay and services depend on.",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./test/support/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticketnest/contracts": "workspace:*",
+    "@ticketnest/errors": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ticketnest/eslint-config": "workspace:*",
+    "@ticketnest/tsconfig": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

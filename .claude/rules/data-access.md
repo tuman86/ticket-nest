@@ -31,7 +31,7 @@ await bookingService.confirmBooking(id); // service -> bookingRepository.markCon
 
 ## Events go through the outbox
 
-- Publish only by writing an outbox row in the same transaction as the state change, using the `packages/messaging` outbox writer.
+- Publish only by writing an outbox row in the same transaction as the state change, using the `packages/messaging` outbox writer (`outbox.add(tx, schema, event)` with the event's schema from `packages/contracts`).
 - Never call the broker (`channel.publish`) from services or controllers, and never after the transaction commits.
 - Consumers: insert the inbox row, apply the effect and write outbox events in one transaction. Use guarded transitions (`updateMany({ where: { id, status: 'PENDING_PAYMENT' } })`).
 
@@ -43,6 +43,6 @@ await broker.publish('booking.created', payload);
 // Good
 await unitOfWork.run(async (tx) => {
   const booking = await bookingRepository.create(data, tx);
-  await outbox.add(tx, bookingCreated(booking));
+  await outbox.add(tx, BookingCreatedEvent, buildBookingCreated(booking));
 });
 ```
