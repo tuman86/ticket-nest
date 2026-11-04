@@ -1,4 +1,4 @@
-import { type DependencyCheck } from './dependency-check';
+import { type DependencyCheck } from '@ticketnest/service-runtime';
 
 interface Queryable {
   query: (text: string) => Promise<unknown>;

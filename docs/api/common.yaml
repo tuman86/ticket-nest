@@ -171,7 +171,9 @@ components:
         | `validation-error`     | 422 | well-formed but semantically invalid; see `errors` |
         | `rate-limited`         | 429 | too many requests; see `Retry-After` |
         | `internal-error`       | 500 | unexpected failure |
+        | `bad-gateway`          | 502 | the gateway could not get a usable answer from a service |
         | `unavailable`          | 503 | dependency down or overloaded; safe to retry |
+        | `gateway-timeout`      | 504 | a service did not answer in time |
 
         Each service adds domain-specific types (for example
         `invalid-credentials`, `schedule-has-bookings`); they are listed in that

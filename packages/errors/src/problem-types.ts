@@ -12,5 +12,7 @@ export const PROBLEM_TYPE_SLUGS = {
   validationError: 'validation-error',
   rateLimited: 'rate-limited',
   unavailable: 'unavailable',
+  badGateway: 'bad-gateway',
+  gatewayTimeout: 'gateway-timeout',
   internalError: 'internal-error',
 } as const;

@@ -2,6 +2,7 @@ import { randomBytes, type KeyObject } from 'node:crypto';
 
 import { createAuthenticateMiddleware } from '@ticketnest/auth-middleware/express';
 import { type Logger } from '@ticketnest/logger';
+import { type RateLimiter, RateLimitService } from '@ticketnest/rate-limit';
 import { vi, type MockInstance } from 'vitest';
 
 import { Argon2idPasswordHasher } from '@/auth/argon2id-password-hasher';
@@ -17,8 +18,6 @@ import { LogoutService } from '@/auth/logout.service';
 import { RefreshService } from '@/auth/refresh.service';
 import { RegisterService } from '@/auth/register.service';
 import { createSigningKeySet, type SigningKeySet } from '@/auth/signing-key-set';
-import { type RateLimiter } from '@/rate-limit/rate-limiter';
-import { RateLimitService } from '@/rate-limit/rate-limit.service';
 import { type UserRecord } from '@/repositories/user.repository';
 import { GetCurrentUserService } from '@/users/get-current-user.service';
 import { createUsersRouter } from '@/users/users.router';

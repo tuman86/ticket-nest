@@ -24,6 +24,8 @@
     "@ticketnest/contracts": "workspace:*",
     "@ticketnest/errors": "workspace:*",
     "@ticketnest/logger": "workspace:*",
+    "@ticketnest/rate-limit": "workspace:*",
+    "@ticketnest/service-runtime": "workspace:*",
     "cors": "catalog:",
     "express": "catalog:",
     "helmet": "catalog:",

@@ -1,13 +1,14 @@
 import { createErrorHandler, handleUnmatchedRoute } from '@ticketnest/errors/express';
 import { getCorrelationId, type Logger } from '@ticketnest/logger';
+import { type DependencyCheck } from '@ticketnest/service-runtime';
+import {
+  createHealthRouter,
+  createRequestLogger,
+  handleRequestId,
+} from '@ticketnest/service-runtime/express';
 import cors from 'cors';
 import express, { type Express, type Router } from 'express';
 import helmet from 'helmet';
-
-import { type DependencyCheck } from './health/dependency-check';
-import { createHealthRouter } from './health/health.router';
-import { handleRequestId } from './http/request-id.middleware';
-import { createRequestLogger } from './http/request-logger.middleware';
 
 export interface AppDependencies {
   readonly logger: Logger;

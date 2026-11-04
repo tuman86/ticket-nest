@@ -1,0 +1,38 @@
+{
+  "name": "@ticketnest/rate-limit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fixed-window rate limiting shared by auth-service and the gateway: the limiter interface, the Redis limiter, the policy service and the Express middleware.",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./express": "./src/express/index.ts",
+    "./testing": "./test/support/in-memory-rate-limiter.ts",
+    "./testing/redis": "./test/support/test-redis.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticketnest/errors": "workspace:*",
+    "@ticketnest/logger": "workspace:*",
+    "ioredis": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ticketnest/eslint-config": "workspace:*",
+    "@ticketnest/tsconfig": "workspace:*",
+    "@types/express": "catalog:",
+    "@types/node": "catalog:",
+    "@types/supertest": "catalog:",
+    "eslint": "catalog:",
+    "express": "catalog:",
+    "supertest": "catalog:",
+    "testcontainers": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

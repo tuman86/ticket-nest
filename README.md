@@ -21,7 +21,7 @@ pnpm format        # prettier --write .
 pnpm format:check  # prettier --check .
 ```
 
-`dev` and `build` exist only where a service is real: `auth-service` today (see its `.env.example`).
+`dev` and `build` exist only where a service is real: `auth-service` and `api-gateway` today (see their `.env.example`).
 The other apps and services are empty placeholders until each one is implemented.
 
 ## Layout
@@ -39,6 +39,7 @@ The other apps and services are empty placeholders until each one is implemented
 | `packages/tsconfig`             | `@ticketnest/tsconfig`             | Shared TypeScript presets             |
 | `packages/eslint-config`        | `@ticketnest/eslint-config`        | Shared ESLint flat config             |
 | `packages/contracts`            | `@ticketnest/contracts`            | Zod schemas shared across services    |
+| `packages/service-runtime`      | `@ticketnest/service-runtime`      | Shutdown, health, request id and log  |
 
 ## Docs
 

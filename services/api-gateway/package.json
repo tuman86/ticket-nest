@@ -3,16 +3,40 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "description": "Single entry point: routing, access-token verification and rate limiting in front of the services. No business rules and no data.",
   "scripts": {
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "build": "esbuild src/server.ts --bundle --platform=node --target=node24 --format=cjs --external:pg-native --define:import.meta.url=__importMetaUrl --banner:js=\"const __importMetaUrl = require('node:url').pathToFileURL(__filename).href;\" --outfile=dist/server.cjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticketnest/auth-middleware": "workspace:*",
+    "@ticketnest/config": "workspace:*",
+    "@ticketnest/errors": "workspace:*",
+    "@ticketnest/logger": "workspace:*",
+    "@ticketnest/rate-limit": "workspace:*",
+    "@ticketnest/service-runtime": "workspace:*",
+    "cors": "catalog:",
+    "express": "catalog:",
+    "helmet": "catalog:",
+    "ioredis": "catalog:",
+    "undici": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@ticketnest/eslint-config": "workspace:*",
     "@ticketnest/tsconfig": "workspace:*",
+    "@types/cors": "catalog:",
+    "@types/express": "catalog:",
     "@types/node": "catalog:",
+    "@types/supertest": "catalog:",
+    "esbuild": "catalog:",
     "eslint": "catalog:",
+    "jose": "catalog:",
+    "supertest": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

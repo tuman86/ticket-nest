@@ -18,6 +18,8 @@ test/
 ## Packages and apps (`packages/*`, `apps/*`)
 
 - One `test/` folder that mirrors `src/` (`src/express/x.ts` -> `test/express/x.test.ts`). Add `test/support/` only when helpers exist.
+- A package that wraps an external system (`packages/rate-limit` and its Redis limiter) may also keep `test/integration/` and a Vitest `integration` project with a Testcontainers global setup, as services do. Its unit project then excludes `test/integration/**`.
+- A fake that several workspaces need (the in-memory rate limiter) stays in the owning package's `test/support/` and is shared through a `./testing` export in its `package.json`. Such a file imports the package's own code with relative paths, because the `@/` alias would resolve to the importing workspace.
 
 ## Imports
 

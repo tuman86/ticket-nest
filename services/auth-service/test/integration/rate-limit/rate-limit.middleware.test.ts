@@ -1,15 +1,18 @@
+import {
+  RateLimitService,
+  RedisFixedWindowRateLimiter,
+  type RateLimitPolicy,
+} from '@ticketnest/rate-limit';
+import { createRateLimitMiddleware } from '@ticketnest/rate-limit/express';
+import { createTestRedis } from '@ticketnest/rate-limit/testing/redis';
 import { Router } from 'express';
 import { type Redis } from 'ioredis';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
-import { createRateLimitMiddleware } from '@/rate-limit/rate-limit.middleware';
-import { RateLimitService } from '@/rate-limit/rate-limit.service';
-import { type RateLimitPolicy } from '@/rate-limit/rate-limit-policies';
-import { RedisFixedWindowRateLimiter } from '@/rate-limit/redis-fixed-window-rate-limiter';
+import { readRateLimitIdentifiers } from '@/rate-limit/rate-limit-identifiers';
 
 import { createTestApp, type TestApp } from '../../support/create-test-app';
-import { createTestRedis } from '../../support/test-redis';
 
 const PATH = '/v1/auth/login';
 const PEPPER = 'a-test-pepper-that-is-long-enough-1';
@@ -83,14 +86,22 @@ beforeAll(async () => {
         });
         router.post(
           PATH,
-          createRateLimitMiddleware({ rateLimitService, policy: POLICY }),
+          createRateLimitMiddleware({
+            rateLimitService,
+            policy: POLICY,
+            readIdentifiers: readRateLimitIdentifiers,
+          }),
           (_request, response) => {
             response.status(204).end();
           },
         );
         router.post(
           REFRESH_PATH,
-          createRateLimitMiddleware({ rateLimitService, policy: REFRESH_TEST_POLICY }),
+          createRateLimitMiddleware({
+            rateLimitService,
+            policy: REFRESH_TEST_POLICY,
+            readIdentifiers: readRateLimitIdentifiers,
+          }),
           (_request, response) => {
             response.status(204).end();
           },

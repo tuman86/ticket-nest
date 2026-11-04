@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { AppError } from '@/app-error';
 import {
+  BadGatewayError,
   BadRequestError,
   ConflictError,
   ForbiddenError,
+  GatewayTimeoutError,
   InternalServerError,
   MethodNotAllowedError,
   NotFoundError,
@@ -110,6 +112,14 @@ describe('http errors', () => {
         'RateLimit-Reset': '30',
       },
     });
+  });
+
+  it.each([
+    [new BadGatewayError(), 502, 'BAD_GATEWAY', 'bad-gateway'],
+    [new GatewayTimeoutError(), 504, 'GATEWAY_TIMEOUT', 'gateway-timeout'],
+  ])('%s has the documented status, code and problem type', (error, status, code, problemType) => {
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({ status, code, problemType });
   });
 
   it('answers 503 with a Retry-After header and the documented code', () => {
