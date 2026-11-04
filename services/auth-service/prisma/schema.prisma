@@ -86,3 +86,26 @@ model RefreshToken {
   @@index([expiresAt])
   @@map("refresh_tokens")
 }
+
+/// Transactional outbox (ADR-0007). A row is inserted in the same transaction as the state change
+/// it describes; a relay publishes unpublished rows later. `payload` is the whole event envelope.
+/// `id` is the event id, so the outbox row and a consumer's inbox key are the same value.
+model Outbox {
+  id               String    @id @db.Uuid
+  /// First segment of the event type (`user` for `user.registered`).
+  aggregateType    String    @map("aggregate_type") @db.VarChar(64)
+  aggregateId      String    @map("aggregate_id")
+  /// The relay publishes the rows of one aggregate in this order.
+  aggregateVersion Int       @map("aggregate_version")
+  /// Event type, also the routing key.
+  type             String    @db.VarChar(128)
+  payload          Json
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Null until the relay has had the broker confirm the message.
+  publishedAt      DateTime? @map("published_at") @db.Timestamptz(3)
+  attempts         Int       @default(0)
+
+  @@unique([aggregateType, aggregateId, aggregateVersion])
+  @@index([publishedAt, createdAt])
+  @@map("outbox")
+}

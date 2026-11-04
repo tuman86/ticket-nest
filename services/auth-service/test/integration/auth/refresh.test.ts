@@ -25,6 +25,7 @@ import {
   TEST_KEY_ID,
   type TestSigningKeys,
 } from '../../support/test-signing-keys';
+import { createDatabaseUserRegisteredRecorder } from '../../support/create-user-registered-event-recorder';
 
 const LOGIN_PATH = '/v1/auth/login';
 const REFRESH_PATH = '/v1/auth/refresh';
@@ -72,6 +73,7 @@ beforeAll(async () => {
             unitOfWork: database.unitOfWork,
             passwordHasher: hasher,
             breachedPasswordChecker: new DenylistBreachedPasswordChecker(),
+            userRegisteredEventRecorder: createDatabaseUserRegisteredRecorder(database),
             logger,
           }),
           loginService: new LoginService({

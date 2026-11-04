@@ -3,6 +3,12 @@ import { randomBytes } from 'node:crypto';
 import { type AccessTokenVerifier } from '@ticketnest/auth-middleware';
 import { createAuthenticateMiddleware } from '@ticketnest/auth-middleware/express';
 import { type Logger } from '@ticketnest/logger';
+import {
+  EventEnvelopeBuilder,
+  OutboxWriter,
+  SystemClock,
+  UuidGenerator,
+} from '@ticketnest/messaging';
 import { type RateLimiter, RateLimitService } from '@ticketnest/rate-limit';
 import { type Router } from 'express';
 import { type Pool } from 'pg';
@@ -18,7 +24,10 @@ import { LogoutService } from './auth/logout.service';
 import { RefreshService } from './auth/refresh.service';
 import { RegisterService } from './auth/register.service';
 import { type TokenService } from './auth/token-service';
+import { UserRegisteredEventRecorder } from './auth/user-registered-event-recorder';
+import { readOrCreateCorrelationId } from './correlation-id';
 import { createPrismaClient } from './repositories/create-prisma-client';
+import { PrismaOutboxRepository } from './repositories/prisma-outbox.repository';
 import { PrismaRefreshTokenRepository } from './repositories/prisma-refresh-token.repository';
 import { PrismaRoleRepository } from './repositories/prisma-role.repository';
 import { PrismaUnitOfWork } from './repositories/prisma-unit-of-work';
@@ -51,6 +60,7 @@ interface Persistence {
   readonly userRepository: PrismaUserRepository;
   readonly roleRepository: PrismaRoleRepository;
   readonly refreshTokenRepository: PrismaRefreshTokenRepository;
+  readonly outboxRepository: PrismaOutboxRepository;
   readonly unitOfWork: PrismaUnitOfWork;
 }
 
@@ -66,6 +76,7 @@ function createPersistence(pool: Pool): Persistence {
     userRepository: new PrismaUserRepository(prisma),
     roleRepository: new PrismaRoleRepository(prisma),
     refreshTokenRepository: new PrismaRefreshTokenRepository(prisma),
+    outboxRepository: new PrismaOutboxRepository(),
     unitOfWork: new PrismaUnitOfWork(prisma),
   };
 }
@@ -86,7 +97,8 @@ async function createAuthEndpoints(
   persistence: Persistence,
 ): Promise<Router> {
   const { logger, tokenService } = options;
-  const { userRepository, roleRepository, refreshTokenRepository, unitOfWork } = persistence;
+  const { userRepository, roleRepository, refreshTokenRepository, outboxRepository, unitOfWork } =
+    persistence;
   const passwordHasher = new Argon2idPasswordHasher();
   return createAuthRouter({
     rateLimiters: createAuthRateLimiters({
@@ -102,6 +114,14 @@ async function createAuthEndpoints(
       unitOfWork,
       passwordHasher,
       breachedPasswordChecker: new DenylistBreachedPasswordChecker(),
+      userRegisteredEventRecorder: new UserRegisteredEventRecorder({
+        outboxWriter: new OutboxWriter(outboxRepository),
+        envelopeBuilder: new EventEnvelopeBuilder({
+          idGenerator: new UuidGenerator(),
+          clock: new SystemClock(),
+        }),
+        readCorrelationId: readOrCreateCorrelationId,
+      }),
       logger,
     }),
     loginService: new LoginService({

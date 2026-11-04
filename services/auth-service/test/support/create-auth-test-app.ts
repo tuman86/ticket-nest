@@ -38,6 +38,7 @@ import {
   TEST_ISSUER,
   type TestSigningKeys,
 } from './test-signing-keys';
+import { createTestUserRegisteredRecorder } from './create-user-registered-event-recorder';
 
 export const DEFAULT_TEST_REUSE_GRACE_MS = 10_000;
 const TEST_RATE_LIMIT_PEPPER = 'test-only-pepper-0123456789abcdef-xyz';
@@ -139,6 +140,7 @@ export async function createAuthTestApp(options: AuthTestAppOptions = {}): Promi
             unitOfWork,
             passwordHasher: hasher,
             breachedPasswordChecker: new DenylistBreachedPasswordChecker(),
+            userRegisteredEventRecorder: createTestUserRegisteredRecorder().recorder,
             logger,
           }),
           loginService: new LoginService({

@@ -26,6 +26,7 @@ import {
   type TestSigningKeys,
 } from '../../support/test-signing-keys';
 import { createTestDatabase, type TestDatabase } from '../../support/test-database';
+import { createDatabaseUserRegisteredRecorder } from '../../support/create-user-registered-event-recorder';
 
 const LOGIN_PATH = '/v1/auth/login';
 const PASSWORD = 'correct-horse-battery';
@@ -60,6 +61,7 @@ beforeAll(async () => {
             unitOfWork: database.unitOfWork,
             passwordHasher: currentHasher,
             breachedPasswordChecker: new DenylistBreachedPasswordChecker(),
+            userRegisteredEventRecorder: createDatabaseUserRegisteredRecorder(database),
             logger,
           }),
           loginService: new LoginService({
