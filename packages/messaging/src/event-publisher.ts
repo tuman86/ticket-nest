@@ -8,9 +8,14 @@ import { type EventEnvelope } from '@ticketnest/contracts';
 export interface EventPublisher {
   /**
    * Makes sure the connection and the domain's topology are ready. Idempotent: it does nothing when
-   * they already are, and it reconnects after a loss.
+   * they already are, and it reconnects after a loss. It never reconnects on its own, so the caller
+   * (the relay loop) calls it again after a failure and owns the backoff.
    *
-   * @throws BrokerUnavailableError when the broker cannot be reached.
+   * @throws BrokerUnavailableError when the broker cannot be reached, the connection is lost or the
+   * broker is blocking it.
+   * @throws TopologyDeclarationError (from `@ticketnest/messaging/relay`) when the broker refuses to
+   * declare the topology. That does not go away by itself: a person fixes the topology or the
+   * permissions.
    */
   connect: () => Promise<void>;
 
@@ -26,7 +31,8 @@ export interface EventPublisher {
    * @param event - The event to send.
    * @throws PublishNotConfirmedError when the connection is up but the broker nacked the event or
    * did not confirm it in time.
-   * @throws BrokerUnavailableError when the connection or channel is closed.
+   * @throws BrokerUnavailableError when the connection or channel is closed, or the broker is
+   * blocking the connection (a memory or disk alarm). No attempt is charged for it.
    */
   publish: (event: EventEnvelope) => Promise<void>;
 }

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BrokerUnavailableError } from '@/broker-unavailable.error';
 import { OutboxRelay } from '@/relay/outbox-relay';
 import { PUBLISH_CONFIRM_TIMEOUT_MS, RELAY_STOP_WAIT_MS } from '@/relay/relay-constants';
+import { TopologyDeclarationError } from '@/relay/topology-declaration.error';
 
 import { buildEventId, buildStoredEvent } from '../support/build-event';
 import { createTestLogger, type LogLine } from '../support/create-test-logger';
@@ -18,6 +19,7 @@ const POLL_INTERVAL_MS = 500;
 /** With the random source at its highest value the backoff is the upper bound of its window. */
 const FIRST_BACKOFF_MS = 1_000;
 const SECOND_BACKOFF_MS = 2_000;
+const PRECONDITION_FAILED = 406;
 
 /**
  * @returns A relay over fakes, and the fakes themselves. Nothing runs until `start`.
@@ -257,6 +259,34 @@ describe('OutboxRelay', () => {
       expect(findLinesWith(lines, 'relay tick failed, backing off')).toHaveLength(1);
       expect(fakeSleep.durations).toEqual([FIRST_BACKOFF_MS, POLL_INTERVAL_MS]);
       expect(countCalls(store, 'claimBatch')).toBe(1);
+      await relay.stop();
+    });
+
+    it('logs a refused topology at error level with what the broker said, claims nothing and backs off', async () => {
+      const { relay, store, publisher, fakeSleep, lines } = buildRelay();
+      const id = addRow(store, 1);
+      const brokerReply = "PRECONDITION_FAILED - inequivalent arg 'alternate-exchange'";
+      publisher.connectError = new TopologyDeclarationError({
+        objectName: 'auth.events',
+        replyCode: PRECONDITION_FAILED,
+        brokerReply,
+      });
+
+      relay.start();
+      await settle();
+      fakeSleep.endOldest();
+      await settle();
+
+      const failures = findLinesWith(lines, 'relay tick failed, backing off');
+      expect(failures).toHaveLength(2);
+      expect(failures[0]).toMatchObject({
+        level: 'error',
+        err: { objectName: 'auth.events', replyCode: PRECONDITION_FAILED, brokerReply },
+      });
+      expect(findLinesWith(lines, 'broker connection lost, backing off')).toHaveLength(0);
+      expect(store.calls).toEqual([]);
+      expect(store.findRowById(id)).toMatchObject({ attempts: 0, isFailed: false });
+      expect(fakeSleep.durations).toEqual([FIRST_BACKOFF_MS, SECOND_BACKOFF_MS]);
       await relay.stop();
     });
 
