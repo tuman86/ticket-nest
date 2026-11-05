@@ -3,7 +3,9 @@ import { createPrivateKey, createPublicKey, type KeyObject } from 'node:crypto';
 import {
   baseConfigSchema,
   originListSchema,
+  outboxRelayConfigShape,
   refreshReuseGraceMsSchema,
+  requireBrokerUrlWhenRelayEnabled,
   shutdownTimeoutMsSchema,
   trustProxyHopsSchema,
 } from '@ticketnest/config';
@@ -118,7 +120,10 @@ export const authConfigSchema = baseConfigSchema
     CORS_ORIGINS: originListSchema,
     JSON_BODY_LIMIT: z.string().regex(BODY_LIMIT_PATTERN).default(DEFAULT_JSON_BODY_LIMIT),
     SHUTDOWN_TIMEOUT_MS: shutdownTimeoutMsSchema,
+    /** `RABBITMQ_URL` and the `OUTBOX_RELAY_*` settings of the relay that publishes `user.registered`. */
+    ...outboxRelayConfigShape,
   })
+  .superRefine(requireBrokerUrlWhenRelayEnabled)
   .superRefine((config, context) => {
     // Rejects the same public key listed twice, or listed next to the signing key it belongs to.
     const seen = new Set([identifyPublicKey(createPublicKey(config.JWT_PRIVATE_KEY))]);

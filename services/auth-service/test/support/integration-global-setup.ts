@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
+import { startRabbitMqBroker } from '@ticketnest/messaging/testing/rabbitmq';
 import { GenericContainer, Wait } from 'testcontainers';
 import { Client } from 'pg';
 import { type TestProject } from 'vitest/node';
@@ -20,6 +21,10 @@ declare module 'vitest' {
     databaseUrl: string;
     /** Connection URL of the throwaway Redis started for this test run. */
     redisUrl: string;
+    /** AMQP URL, with credentials, of the throwaway RabbitMQ started for this test run (vhost `/`). */
+    amqpUrl: string;
+    /** Base URL of that broker's management HTTP API. */
+    managementUrl: string;
   }
 }
 
@@ -52,19 +57,21 @@ async function applyMigrations(databaseUrl: string): Promise<void> {
 }
 
 /**
- * Vitest global setup: starts one Postgres container (migrated) and one Redis container, and
- * shares their URLs with the test files through `inject('databaseUrl')` and `inject('redisUrl')`.
+ * Vitest global setup: starts one Postgres container (migrated), one Redis container and one
+ * RabbitMQ container, and shares their URLs with the test files through `inject('databaseUrl')`,
+ * `inject('redisUrl')`, `inject('amqpUrl')` and `inject('managementUrl')`.
  *
  * @param project - The Vitest project that runs the integration tests.
- * @returns A teardown function that stops both containers.
+ * @returns A teardown function that stops the containers.
  */
 export default async function setup(project: TestProject): Promise<() => Promise<void>> {
-  const [container, redisContainer] = await Promise.all([
+  const [container, redisContainer, broker] = await Promise.all([
     new PostgreSqlContainer(POSTGRES_IMAGE).start(),
     new GenericContainer(REDIS_IMAGE)
       .withExposedPorts(REDIS_PORT)
       .withWaitStrategy(Wait.forLogMessage(REDIS_READY_MESSAGE))
       .start(),
+    startRabbitMqBroker(),
   ]);
   const databaseUrl = container.getConnectionUri();
   await applyMigrations(databaseUrl);
@@ -74,7 +81,10 @@ export default async function setup(project: TestProject): Promise<() => Promise
     `redis://${redisContainer.getHost()}:${String(redisContainer.getMappedPort(REDIS_PORT))}`,
   );
 
+  project.provide('amqpUrl', broker.amqpUrl);
+  project.provide('managementUrl', broker.managementUrl);
+
   return async () => {
-    await Promise.all([container.stop(), redisContainer.stop()]);
+    await Promise.all([container.stop(), redisContainer.stop(), broker.stop()]);
   };
 }

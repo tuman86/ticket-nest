@@ -4,6 +4,12 @@ import { type Pool } from 'pg';
 import { PrismaClient } from '../generated/prisma/client';
 
 /**
+ * The service's Prisma client. Re-exported so the composition root can pass it around without
+ * importing the generated path, which only `src/repositories/` may do.
+ */
+export type DatabaseClient = PrismaClient;
+
+/**
  * Builds the Prisma client on top of an existing `pg` pool, so health checks and queries share
  * one set of connections. Called only from the composition root and from tests.
  *

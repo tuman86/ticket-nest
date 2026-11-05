@@ -41,6 +41,7 @@ const VALID_ENVIRONMENT = {
   JWT_ISSUER: 'https://auth.ticketnest.example',
   JWT_AUDIENCE: 'ticketnest-api',
   RATE_LIMIT_KEY_PEPPER: 'test-only-pepper-0123456789abcdef-xyz',
+  RABBITMQ_URL: 'amqp://ticketnest:s3cret-broker-pw@localhost:5672/ticketnest',
 };
 
 describe('authConfigSchema', () => {
@@ -247,5 +248,65 @@ describe('REFRESH_REUSE_GRACE_MS', () => {
     expect(() =>
       loadConfig(authConfigSchema, { ...VALID_ENVIRONMENT, REFRESH_REUSE_GRACE_MS: '30001' }),
     ).toThrow('REFRESH_REUSE_GRACE_MS');
+  });
+});
+
+describe('outbox relay variables', () => {
+  /** @returns The valid environment without `RABBITMQ_URL`, for the cases that leave it out. */
+  function environmentWithoutBrokerUrl(): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(VALID_ENVIRONMENT).filter(([name]) => name !== 'RABBITMQ_URL'),
+    );
+  }
+
+  it('defaults the relay to enabled with a poll interval of 1000 and a batch size of 50', () => {
+    expect(loadConfig(authConfigSchema, VALID_ENVIRONMENT)).toMatchObject({
+      OUTBOX_RELAY_ENABLED: true,
+      OUTBOX_RELAY_POLL_INTERVAL_MS: 1_000,
+      OUTBOX_RELAY_BATCH_SIZE: 50,
+    });
+  });
+
+  it('reads the relay variables from the environment', () => {
+    expect(
+      loadConfig(authConfigSchema, {
+        ...VALID_ENVIRONMENT,
+        OUTBOX_RELAY_POLL_INTERVAL_MS: '250',
+        OUTBOX_RELAY_BATCH_SIZE: '200',
+      }),
+    ).toMatchObject({
+      RABBITMQ_URL: VALID_ENVIRONMENT.RABBITMQ_URL,
+      OUTBOX_RELAY_POLL_INTERVAL_MS: 250,
+      OUTBOX_RELAY_BATCH_SIZE: 200,
+    });
+  });
+
+  it('refuses to start without RABBITMQ_URL while the relay is enabled', () => {
+    expect(() => loadConfig(authConfigSchema, environmentWithoutBrokerUrl())).toThrow(
+      /RABBITMQ_URL: required but missing/,
+    );
+  });
+
+  it('starts without RABBITMQ_URL when OUTBOX_RELAY_ENABLED=false', () => {
+    const config = loadConfig(authConfigSchema, {
+      ...environmentWithoutBrokerUrl(),
+      OUTBOX_RELAY_ENABLED: 'false',
+    });
+
+    expect(config.OUTBOX_RELAY_ENABLED).toBe(false);
+    expect(config.RABBITMQ_URL).toBeUndefined();
+  });
+
+  it('names RABBITMQ_URL and never prints its password in the ConfigError', () => {
+    const badUrl = 'http://ticketnest:s3cret-broker-pw@localhost:5672/ticketnest';
+    let message = '';
+    try {
+      loadConfig(authConfigSchema, { ...VALID_ENVIRONMENT, RABBITMQ_URL: badUrl });
+    } catch (error) {
+      message = error instanceof ConfigError ? error.message : String(error);
+    }
+
+    expect(message).toContain('RABBITMQ_URL');
+    expect(message).not.toContain('s3cret-broker-pw');
   });
 });

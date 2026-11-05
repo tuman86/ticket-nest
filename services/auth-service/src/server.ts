@@ -1,8 +1,10 @@
+import { type Server } from 'node:http';
+
 import { loadConfig } from '@ticketnest/config';
 import { createLogger, type Logger } from '@ticketnest/logger';
 import { closeRedisClient, RedisFixedWindowRateLimiter } from '@ticketnest/rate-limit';
 import { createShutdown } from '@ticketnest/service-runtime';
-import { type Router } from 'express';
+import { type Express, type Router } from 'express';
 import { Redis } from 'ioredis';
 import { Pool } from 'pg';
 
@@ -12,9 +14,11 @@ import { EdDsaTokenService } from './auth/eddsa-token-service';
 import { JwksService } from './auth/jwks.service';
 import { createSigningKeySet } from './auth/signing-key-set';
 import { composeAuthRouter } from './compose-auth-router';
+import { composeOutboxRelay, type OutboxRelayHandle } from './compose-outbox-relay';
 import { type AuthConfig, authConfigSchema, SERVICE_NAME } from './config';
-import { createPostgresCheck } from './health/postgres-check';
-import { createRedisCheck } from './health/redis-check';
+import { createShutdownResources } from './create-shutdown-resources';
+import { createReadinessChecks } from './health/create-readiness-checks';
+import { createPrismaClient, type DatabaseClient } from './repositories/create-prisma-client';
 
 const SHUTDOWN_SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const CONNECT_TIMEOUT_MS = 2_000;
@@ -90,12 +94,12 @@ async function composeRouters(dependencies: {
   readonly config: AuthConfig;
   readonly logger: Logger;
   readonly keySet: Awaited<ReturnType<typeof loadSigningKeys>>;
-  readonly pool: Pool;
+  readonly prisma: DatabaseClient;
   readonly redis: Redis;
 }): Promise<readonly Router[]> {
-  const { config, logger, keySet, pool, redis } = dependencies;
+  const { config, logger, keySet, prisma, redis } = dependencies;
   return composeAuthRouter({
-    pool,
+    prisma,
     logger,
     tokenService: new EdDsaTokenService({
       privateKey: keySet.signingPrivateKey,
@@ -117,6 +121,32 @@ async function composeRouters(dependencies: {
   });
 }
 
+/**
+ * Starts the HTTP listener and, once it is accepting connections, the outbox relay. The relay
+ * starts last so a port that cannot be bound never leaves a relay running, and it keeps running
+ * while the server drains on shutdown.
+ *
+ * @param options - The app, the port, the logger and the relay to start.
+ * @returns The listening server. A listen error is logged and ends the process with code 1.
+ */
+function listen(options: {
+  readonly app: Express;
+  readonly port: number;
+  readonly logger: Logger;
+  readonly outboxRelay: OutboxRelayHandle;
+}): Server {
+  const { app, port, logger, outboxRelay } = options;
+  const server = app.listen(port, () => {
+    logger.info({ port }, 'server listening');
+    outboxRelay.start();
+  });
+  server.once('error', (error) => {
+    logger.fatal({ err: error }, 'server failed to start');
+    process.exit(1);
+  });
+  return server;
+}
+
 /** Composition root: the only place that names concrete clients. */
 async function main(): Promise<void> {
   const config = loadConfig(authConfigSchema);
@@ -127,13 +157,16 @@ async function main(): Promise<void> {
   });
   const keySet = await loadSigningKeys(config, logger);
   const pool = createPool(config, logger);
+  const prisma = createPrismaClient(pool);
   const redis = createRedisClient(config, logger);
+  const outboxRelay = composeOutboxRelay({ config, prisma, logger });
 
   const { isShuttingDown, shutdown } = createShutdown({
-    resources: [
-      { name: 'postgres', close: () => pool.end() },
-      { name: 'redis', close: () => closeRedisClient(redis) },
-    ],
+    resources: createShutdownResources({
+      relayResources: outboxRelay.resources,
+      closePostgres: () => pool.end(),
+      closeRedis: () => closeRedisClient(redis),
+    }),
     timeoutMs: config.SHUTDOWN_TIMEOUT_MS,
     logger,
     exit: (code) => process.exit(code),
@@ -141,22 +174,16 @@ async function main(): Promise<void> {
 
   const app = createApp({
     logger,
-    readinessChecks: [createPostgresCheck(pool), createRedisCheck(redis)],
+    readinessChecks: createReadinessChecks({ pool, redis }),
     isShuttingDown,
     corsOrigins: config.CORS_ORIGINS,
     jsonBodyLimit: config.JSON_BODY_LIMIT,
     isDebugInfoExposed: config.NODE_ENV === 'development',
     trustProxyHops: config.TRUST_PROXY_HOPS,
-    routers: await composeRouters({ config, logger, keySet, pool, redis }),
+    routers: await composeRouters({ config, logger, keySet, prisma, redis }),
   });
 
-  const server = app.listen(config.PORT, () => {
-    logger.info({ port: config.PORT }, 'server listening');
-  });
-  server.once('error', (error) => {
-    logger.fatal({ err: error }, 'server failed to start');
-    process.exit(1);
-  });
+  const server = listen({ app, port: config.PORT, logger, outboxRelay });
 
   for (const signal of SHUTDOWN_SIGNALS) {
     process.on(signal, () => void shutdown(signal, server));
