@@ -72,7 +72,7 @@ Legend: ✓ grants it by the PRD matrix · ✓* **[Assumption]** · blank means 
 | `schedule:read` | | ✓ | | ✓ |
 | `schedule:manage` | | ✓ | | ✓ |
 | `schedule:cancel` | | ✓ (own tenant) | | ✓ |
-| `movie:manage` | | ✓* | | ✓ |
+| `movie:manage` | | | | ✓ |
 | `station:manage` | | | | ✓* |
 | `policy:manage` | | | | ✓ |
 | `fee:manage` | | | | ✓ |
@@ -87,6 +87,6 @@ Operator grants are tenant-scoped by the token's `tenantId`, which comes from th
 ## 4. Open questions
 
 1. **Recent login for candidates.** Should `operator:manage`, `schedule:cancel` and `fee:manage` also require a recent login? Cancelling a show triggers mass refunds, and fees change revenue.
-2. **Who owns movies and stations?** The grants above assume movies are shared with operators and stations are platform-only. The PRD does not say.
+2. **Who owns stations?** Movies are decided: they are global and admin-curated, so only `ADMIN` holds `movie:manage` ([ADR-0015](./adr/0015-multi-tenancy-enforcement.md)). The grant above assumes stations are platform-only; the PRD does not say.
 3. **Support access to users.** Does `SUPPORT_AGENT` need `user:read:any` to look up a customer, or is `booking:read:any` enough?
 4. **Billing and notification permissions.** None exist yet. Add them when the payment, booking and notification specs are written.

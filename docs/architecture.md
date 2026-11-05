@@ -424,8 +424,8 @@ Idempotency keys expire after 24 h. Keys are scoped per user or guest session so
 
 - **AuthN/AuthZ [Rec].** Asymmetric JWT (EdDSA or RS256) issued by the auth service with a JWKS endpoint. The gateway **and** every service verify the token (zero trust). Access tokens last 10 minutes and carry `sub`, `role`, `permissions[]`, and `tenantId`; refresh tokens rotate with reuse detection. Permission edits take effect within one token lifetime.
 - **Guests.** The auth service issues an anonymous session token; holds bind to its `sid`. After email OTP it issues a short-lived email-proof token. The auth service holds no booking data, so the **booking service** checks that the booking reference and contact email match before authorising view or cancel.
-- **Multi-tenancy.** `tenant_id` on every operator-owned row, enforced in a shared repository layer with tests that fail on unscoped queries. Postgres RLS is evaluated in ADR-0015.
-- **Money and time.** Money is integer minor units (cents), never floats. Timestamps are UTC; the IANA timezone is stored on venue and station and used for display and for cutoff and refund-window calculations.
+- **Multi-tenancy.** `tenant_id` on every operator-owned row, enforced in a shared repository layer with tests that fail on unscoped queries. Postgres RLS is not used for now (a documented upgrade path); scopes, enforcement and the null-tenant exception for platform policies are in [ADR-0015](adr/0015-multi-tenancy-enforcement.md).
+- **Money and time.** Money is integer minor units (cents), never floats. Timestamps are UTC; the IANA timezone is stored on venue and station and used for display and for cutoff and refund-window calculations. Rounding (half up, once per amount), the booking fee snapshot, the injected clock, the refund tier boundary, boarding-point zones, DST and the sales-cutoff constants are in [ADR-0012](adr/0012-money-and-time.md).
 - **API style.** REST with OpenAPI, RFC 9457 problem-details errors, cursor pagination, Zod validation shared through `packages/contracts`.
 - **Observability (PRD "standard").** pino JSON logs; `x-request-id` / `correlationId` propagated through HTTP headers and event headers; Prometheus metrics (RED per service plus seat-hold contention rate, outbox lag, DLQ depth, hold-to-confirm conversion); `/healthz` and `/readyz` on every service.
 - **Resilience.** Timeouts, retries with jitter, circuit breakers on sync calls, and a bulkhead around the operator-cancel fan-out so it cannot starve live bookings.
@@ -516,7 +516,7 @@ Format: MADR, stored as `docs/adr/NNNN-title.md`.
 | 0009 | Seat concurrency: Redis hold + Postgres arbiter + sweeper |
 | 0010 | Train segment-based availability model |
 | 0011 | Event contracts: envelope, Zod schemas, versioning |
-| 0012 | Money and time handling (minor units, UTC, IANA zones) |
+| 0012 | [Money and time handling (minor units, UTC, IANA zones)](adr/0012-money-and-time.md) |
 
 **Write alongside the relevant milestone**
 
@@ -524,7 +524,7 @@ Format: MADR, stored as `docs/adr/NNNN-title.md`.
 |---|---|
 | 0013 | AuthN/AuthZ: asymmetric JWT, refresh rotation, permission claims |
 | 0014 | Guest identity, OTP booking lookup, guest-to-account merge |
-| 0015 | Multi-tenancy enforcement (repository layer vs Postgres RLS) |
+| 0015 | [Multi-tenancy enforcement (repository layer vs Postgres RLS)](adr/0015-multi-tenancy-enforcement.md) |
 | 0016 | API style: REST + OpenAPI, problem details, pagination, gateway/BFF role |
 | 0017 | Stripe integration: PaymentIntents, webhooks, refunds, USD |
 | 0018 | Cancellation policy modelling and snapshotting |
@@ -543,4 +543,4 @@ Format: MADR, stored as `docs/adr/NNNN-title.md`.
 2. **RabbitMQ on AWS.** Amazon MQ (managed, higher cost) vs self-managed in the cluster (cheaper, more operational work).
 3. **Reminder mechanism.** DB-backed scheduler in notification (recommended, cancellable) vs RabbitMQ delayed messages.
 4. **Ticket PDF generation.** On demand in booking (recommended) vs pre-rendered and stored in S3.
-5. **RLS vs application-level tenant scoping** for operator data.
+5. ~~**RLS vs application-level tenant scoping** for operator data.~~ Proposed in [ADR-0015](adr/0015-multi-tenancy-enforcement.md): application-level scoping, no RLS for now.

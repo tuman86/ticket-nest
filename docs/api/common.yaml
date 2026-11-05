@@ -132,7 +132,6 @@ components:
         currency:
           type: string
           enum: [USD]
-          default: USD
       examples:
         - amountMinor: 2500
           currency: USD
