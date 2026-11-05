@@ -234,6 +234,7 @@ One RDS PostgreSQL instance with one **database per service** and a dedicated DB
 - **Topic exchanges** per producing domain: `auth.events`, `catalog.events`, `booking.events`, `payment.events`. Routing keys are event types, e.g. `booking.confirmed`.
 - **One durable quorum queue per consuming service per exchange**, e.g. `notification.booking-events`.
 - Persistent messages, **publisher confirms**, manual acks, bounded prefetch.
+- **Publisher side.** Each producer declares its own `<domain>.events` exchange with an **alternate exchange** (`<domain>.events.unrouted`) and a bounded catch-all queue (`<domain>.unrouted`), so an event with no bound queue is kept instead of dropped. Consumers declare their own queues and bindings. Details, names and the declaration order are in [ADR-0005](adr/0005-rabbitmq-topology.md).
 - Retry: on handler failure, route to a TTL retry queue with exponential backoff (e.g. 5 s → 30 s → 5 min), then to a per-consumer **dead-letter queue**. DLQ depth is alerted.
 
 ### 6.2 Event envelope
@@ -376,16 +377,20 @@ Every service that publishes events has an outbox:
 outbox(
   id uuid pk, aggregate_type, aggregate_id, aggregate_version,
   type, payload jsonb,
-  created_at, published_at null, attempts int
+  created_at, published_at null, attempts int,
+  locked_until null, locked_by null, failed_at null
 )
 ```
 
-`payload` is the whole event envelope (§6.2), so the relay publishes it as is and nothing is rebuilt from columns; `id` is the event id. There is no separate `headers` column (ADR-0007).
+`payload` is the whole event envelope (§6.2), so the relay publishes it as is and nothing is rebuilt from columns; `id` is the event id. There is no separate `headers` column (ADR-0007). `locked_until`, `locked_by` and `failed_at` belong to the relay and are added with it.
 
 - Rows are written **in the same database transaction** as the state change (Prisma `$transaction`). The shared helper takes the transaction client, so business code cannot publish without it.
-- **[Rec] Polling relay, in-process.** Select unpublished rows `FOR UPDATE SKIP LOCKED` in batches, publish with publisher confirms, then set `published_at`. Order per aggregate by `aggregate_version`. Several replicas can run the relay safely.
-- Delivery is **at-least-once**: a crash between publish and mark causes a duplicate. Consumers must tolerate duplicates (§8.2).
-- A janitor deletes published rows after N days.
+- **[Rec] Polling relay, in-process, lease-based.** One SQL statement claims a batch of unpublished rows that are not leased and not failed (`FOR UPDATE SKIP LOCKED`, oldest first), sets `locked_until` and `locked_by`, and returns them. The relay publishes **outside any transaction** with publisher confirms, then sets `published_at` in a second statement. Several replicas can run the relay safely, and the rows of a crashed replica become claimable when the lease expires. The lease is compared with the database clock, and every update is guarded by the claim's id so only the current lease holder changes a row (ADR-0007).
+- **No ordering guarantee.** The relay claims oldest first, but replicas, retries and consumer retry queues can reorder events of one aggregate. Consumers compare `aggregate_version` and use guarded transitions (§8.2).
+- **Failures.** A row the broker refuses gets `attempts + 1` and a backoff (1 s to 5 min, jitter) written to `locked_until`. After 10 such failures, or at once when the stored payload is not a valid envelope, it gets `failed_at` and is skipped until a person re-queues it. A broker that is unreachable burns no attempts.
+- **Unrouted events.** The publisher's alternate exchange and catch-all queue keep an event that has no bound queue, so the confirm is a real ack (§6.1, ADR-0005).
+- Delivery is **at-least-once**: a crash between publish and mark, or a lease that expires mid-publish, causes a duplicate. Consumers must tolerate duplicates (§8.2).
+- A janitor deletes published rows after N days (not yet decided: ADR-0007).
 - Alternative considered: CDC with Debezium. Rejected for now as heavy infrastructure for a solo project; ADR-0007 records the trade-off.
 
 ### 8.2 Inbox (consumer side)
@@ -400,7 +405,7 @@ A handler runs in **one transaction**: insert the inbox row, apply the effect, w
 
 ### 8.3 Shared library
 
-`packages/messaging` provides the outbox writer, relay, inbox wrapper, retry/DLQ topology, and envelope helpers, so each service gets this behaviour by configuration rather than by copy-paste.
+`packages/messaging` provides the outbox writer and envelope helpers, and (in its `/relay` entry) the relay loop and the AMQP publisher. The inbox wrapper and the consumer retry/DLQ topology are still to come. The package cannot import a service's Prisma client, so each service implements `OutboxStore` (insert) and `OutboxRelayStore` (claim and mark) in its `src/repositories/`. A service then gets this behaviour by configuration rather than by copy-paste.
 
 ---
 
@@ -427,7 +432,7 @@ Idempotency keys expire after 24 h. Keys are scoped per user or guest session so
 - **Multi-tenancy.** `tenant_id` on every operator-owned row, enforced in a shared repository layer with tests that fail on unscoped queries. Postgres RLS is not used for now (a documented upgrade path); scopes, enforcement and the null-tenant exception for platform policies are in [ADR-0015](adr/0015-multi-tenancy-enforcement.md).
 - **Money and time.** Money is integer minor units (cents), never floats. Timestamps are UTC; the IANA timezone is stored on venue and station and used for display and for cutoff and refund-window calculations. Rounding (half up, once per amount), the booking fee snapshot, the injected clock, the refund tier boundary, boarding-point zones, DST and the sales-cutoff constants are in [ADR-0012](adr/0012-money-and-time.md).
 - **API style.** REST with OpenAPI, RFC 9457 problem-details errors, cursor pagination, Zod validation shared through `packages/contracts`.
-- **Observability (PRD "standard").** pino JSON logs; `x-request-id` / `correlationId` propagated through HTTP headers and event headers; Prometheus metrics (RED per service plus seat-hold contention rate, outbox lag, DLQ depth, hold-to-confirm conversion); `/healthz` and `/readyz` on every service.
+- **Observability (PRD "standard").** pino JSON logs; `x-request-id` / `correlationId` propagated through HTTP headers and event headers; Prometheus metrics (RED per service plus seat-hold contention rate, outbox lag, DLQ depth, hold-to-confirm conversion); `/health/live` and `/health/ready` on every service (readiness does not include the broker, §13).
 - **Resilience.** Timeouts, retries with jitter, circuit breakers on sync calls, and a bulkhead around the operator-cancel fan-out so it cannot starve live bookings.
 
 ---
@@ -448,6 +453,8 @@ Idempotency keys expire after 24 h. Keys are scoped per user or guest session so
 | 10 | Stripe refund fails | `refund.failed` is retried with backoff, then surfaces to support and alerts | Refund state is tracked and visible; never silently lost |
 | 11 | Notification provider outage | Retries, then DLQ; the booking is unaffected | Notification is a leaf consumer with no callbacks |
 | 12 | Booking service crashes after charging, before confirm | Event waits in the queue; processed on restart | At-least-once delivery plus idempotent confirm |
+| 13 | RabbitMQ is down or restarts | The API keeps accepting writes; outbox rows wait and the relay backs off, burning no attempts | The outbox is the buffer; publishing resumes when the broker returns |
+| 14 | An event is published before any consumer has bound a queue | The broker routes it to the producer's catch-all queue `<domain>.unrouted` (bounded by TTL and length) | The confirm is a real ack; re-driving is not decided yet (ADR-0005) |
 
 ---
 
@@ -493,7 +500,7 @@ Small edits to `prd.md` that this design surfaces. Not yet applied.
 - Each service and each Next.js app ships as a container image built in CI (GitHub Actions) with a pnpm/Turborepo-aware Dockerfile.
 - Local development: Docker Compose runs Postgres, Redis, RabbitMQ and the services.
 - AWS target **[Rec]**: EKS for workloads, RDS PostgreSQL (one instance, database per service), ElastiCache Redis, Amazon MQ for RabbitMQ (or self-managed in-cluster for cost), ALB ingress, Secrets Manager for credentials, Terraform for infrastructure. Details in ADR-0023.
-- Each service exposes `/healthz` (liveness) and `/readyz` (readiness, checks DB and broker) for Kubernetes probes. The outbox relay and sweeper run in every replica and are safe to run concurrently thanks to `SKIP LOCKED`.
+- Each service exposes `/health/live` (liveness) and `/health/ready` (readiness: its own Postgres and Redis, **not the broker**, so a broker outage delays publishing but does not take the API out of rotation) for Kubernetes probes. The outbox relay (switchable with `OUTBOX_RELAY_ENABLED`) and the sweeper run in every replica. The relay is safe to run concurrently through its lease claim (ADR-0007); the sweeper relies on `SKIP LOCKED`. On shutdown the relay stops before the AMQP connection and the database pool close.
 
 ---
 
@@ -509,7 +516,7 @@ Format: MADR, stored as `docs/adr/NNNN-title.md`.
 | 0002 | Service decomposition and boundaries |
 | 0003 | Database per service on a shared RDS instance (Prisma per service) |
 | 0004 | Communication rules: sync REST vs async events; resilience policy |
-| 0005 | RabbitMQ topology: exchanges, quorum queues, retry and DLQ |
+| 0005 | [RabbitMQ topology: exchanges, quorum queues, retry and DLQ](adr/0005-rabbitmq-topology.md) (publisher side written; consumer side open) |
 | 0006 | Booking saga: orchestration in the booking service |
 | 0007 | Transactional outbox (polling relay) and inbox |
 | 0008 | Idempotency strategy across boundaries |
