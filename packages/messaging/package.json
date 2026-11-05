@@ -3,10 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Event publishing for every service: the envelope builder, the transactional outbox writer, and the store and publisher interfaces the relay and services depend on.",
+  "description": "Event publishing for every service: the envelope builder, the transactional outbox writer, the store and publisher interfaces, and (in the /relay entry) the outbox relay that moves rows to the broker.",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./relay": "./src/relay/index.ts",
     "./testing": "./test/support/index.ts"
   },
   "scripts": {
@@ -17,6 +18,7 @@
   "dependencies": {
     "@ticketnest/contracts": "workspace:*",
     "@ticketnest/errors": "workspace:*",
+    "@ticketnest/logger": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

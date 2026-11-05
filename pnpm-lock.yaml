@@ -519,6 +519,9 @@ importers:
       '@ticketnest/errors':
         specifier: workspace:*
         version: link:../errors
+      '@ticketnest/logger':
+        specifier: workspace:*
+        version: link:../logger
       zod:
         specifier: 'catalog:'
         version: 4.6.7
