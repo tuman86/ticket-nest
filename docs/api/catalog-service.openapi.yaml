@@ -26,7 +26,13 @@ info:
     * **Tenancy:** operator users act only on resources whose `operatorId`
       equals the `tenantId` claim of their token. Other tenants' resources answer
       `404`. Admins act on any tenant and must pass `operatorId` when creating
-      operator-owned resources.
+      operator-owned resources. The scope comes from the verified token only:
+      `public` (anonymous or customer: published, unstarted schedules and public
+      fields), `tenant` (the token has `tenantId`; a caller's `operatorId` filter
+      is overridden by it) or `all` (no `tenantId` and the permission the
+      operation requires; `operatorId` is an ordinary filter). Movies and
+      stations are not tenant-owned. Platform-default cancellation policies have a
+      `null` `operatorId` and are readable by everyone (see ADR-0015).
 
     ## Schedules
     A *schedule* is one sellable occurrence, with a `vertical` discriminator:
@@ -53,7 +59,7 @@ info:
     | `invalid-layout`           | 422 | seat ids not unique or positions outside the grid |
     | `invalid-policy-tiers`     | 422 | tiers not strictly descending or last tier is not 0 hours |
     | `operator-required`        | 422 | admin created an operator-owned resource without `operatorId` |
-    | `schedule-in-past`         | 422 | start is before the sales cutoff |
+    | `schedule-in-past`         | 422 | start is before the sales cutoff (`SALES_CUTOFF_MINUTES`: movies 15, buses 60, trains 240; ADR-0012) |
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -72,7 +78,7 @@ tags:
   - name: Schedules
     description: Shows, bus trips and train runs.
   - name: Movies
-    description: Shared movie catalogue.
+    description: Shared, admin-curated movie catalogue (not tenant-owned).
   - name: Venues and screens
     description: Cinemas and their screens with seat layouts.
   - name: Stations and routes
@@ -498,7 +504,10 @@ paths:
       tags: [Movies]
       operationId: createMovie
       summary: Create a movie
-      description: Movies are shared across cinemas.
+      description: |
+        Movies are shared across cinemas and belong to no tenant. Only admins
+        (`movie:manage`) create, edit or delete them; operators pick from the
+        catalogue when creating a show (ADR-0015).
       x-permissions: ['movie:manage']
       requestBody:
         required: true
@@ -1964,7 +1973,10 @@ components:
           items: { $ref: '#/components/schemas/TransportMode' }
     StopPoint:
       type: object
-      description: A boarding or dropping point within a bus stop (chosen by the passenger at booking).
+      description: |
+        A boarding or dropping point within a bus stop (chosen by the passenger
+        at booking). It has no timezone of its own: its time is shown in the
+        timezone of the stop's `Station` (ADR-0012).
       required: [name, offsetMinutes]
       properties:
         id: { $ref: './common.yaml#/components/schemas/Id', readOnly: true }
@@ -1975,6 +1987,10 @@ components:
           description: Minutes after the stop's scheduled time at which the bus reaches this point (may be negative).
     RouteStop:
       type: object
+      description: |
+        A station on a route. Offsets are minutes from the schedule's origin
+        departure; the stop's local time is shown in its `Station` timezone
+        (ADR-0012).
       required: [stationId, sequence, distanceKm]
       properties:
         stationId: { $ref: './common.yaml#/components/schemas/Id' }
@@ -2195,7 +2211,10 @@ components:
           description: Derived from the movie duration or the route's last stop.
         timezone:
           $ref: '#/components/schemas/Timezone'
-          description: Zone to display times in (venue or origin station).
+          description: |
+            Origin zone: the venue or origin station. Used to display `startsAt`
+            and by the search `date` filter. Times at later stops use their own
+            station's zone (ADR-0012).
         cancellationPolicy:
           $ref: '#/components/schemas/CancellationPolicy'
           readOnly: true
