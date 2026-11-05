@@ -1,6 +1,7 @@
 import { type DependencyCheck } from '@ticketnest/service-runtime';
 
-interface Queryable {
+/** The slice of a `pg` pool that the readiness check uses. */
+export interface Queryable {
   query: (text: string) => Promise<unknown>;
 }
 

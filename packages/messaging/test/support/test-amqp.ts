@@ -18,6 +18,7 @@ const MANAGEMENT_TIMEOUT_MS = 10_000;
 const FETCH_POLL_INTERVAL_MS = 50;
 const CONNECTION_COUNT_TIMEOUT_MS = 20_000;
 const FETCH_TIMEOUT_MS = 5_000;
+const EXCHANGE_TIMEOUT_MS = 10_000;
 const DOMAIN_LENGTH = 12;
 const FIRST_LETTER_CODE = 97;
 const LETTER_COUNT = 26;
@@ -227,4 +228,35 @@ export async function waitForConnectionCount(
     }
   }
   return count;
+}
+
+/**
+ * Waits until an exchange exists. A check on a missing exchange makes the broker close the channel
+ * with 404, so every attempt uses a channel of its own.
+ *
+ * @param connection - A connection the test owns.
+ * @param exchangeName - The exchange to wait for.
+ * @param timeoutMs - How long to wait for it.
+ * @throws Error when the exchange does not appear in time.
+ */
+export async function waitForExchange(
+  connection: ChannelModel,
+  exchangeName: string,
+  timeoutMs: number = EXCHANGE_TIMEOUT_MS,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const channel = await connection.createChannel();
+    channel.on('error', () => undefined);
+    try {
+      await channel.checkExchange(exchangeName);
+      await channel.close();
+      return;
+    } catch {
+      if (Date.now() >= deadline) {
+        throw new Error(`The exchange ${exchangeName} did not appear.`);
+      }
+      await sleep(FETCH_POLL_INTERVAL_MS);
+    }
+  }
 }

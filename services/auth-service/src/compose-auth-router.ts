@@ -11,7 +11,6 @@ import {
 } from '@ticketnest/messaging';
 import { type RateLimiter, RateLimitService } from '@ticketnest/rate-limit';
 import { type Router } from 'express';
-import { type Pool } from 'pg';
 
 import { Argon2idPasswordHasher } from './auth/argon2id-password-hasher';
 import { createAuthRateLimiters } from './auth/auth-rate-limiters';
@@ -26,7 +25,7 @@ import { RegisterService } from './auth/register.service';
 import { type TokenService } from './auth/token-service';
 import { UserRegisteredEventRecorder } from './auth/user-registered-event-recorder';
 import { readOrCreateCorrelationId } from './correlation-id';
-import { createPrismaClient } from './repositories/create-prisma-client';
+import { type DatabaseClient } from './repositories/create-prisma-client';
 import { PrismaOutboxRepository } from './repositories/prisma-outbox.repository';
 import { PrismaRefreshTokenRepository } from './repositories/prisma-refresh-token.repository';
 import { PrismaRoleRepository } from './repositories/prisma-role.repository';
@@ -38,8 +37,8 @@ import { createUsersRouter } from './users/users.router';
 const DUMMY_PASSWORD_BYTES = 32;
 
 export interface ComposeAuthRouterOptions {
-  /** The service's Postgres pool. The caller owns it and closes it on shutdown. */
-  readonly pool: Pool;
+  /** The service's Prisma client, over its Postgres pool. The caller owns both and closes them on shutdown. */
+  readonly prisma: DatabaseClient;
   readonly logger: Logger;
   /** Signs access tokens and creates refresh tokens. */
   readonly tokenService: TokenService;
@@ -65,13 +64,12 @@ interface Persistence {
 }
 
 /**
- * Builds the repositories over the service's pool.
+ * Builds the repositories over the service's Prisma client.
  *
- * @param pool - The service's Postgres pool.
+ * @param prisma - The service's Prisma client.
  * @returns The repositories and the unit of work.
  */
-function createPersistence(pool: Pool): Persistence {
-  const prisma = createPrismaClient(pool);
+function createPersistence(prisma: DatabaseClient): Persistence {
   return {
     userRepository: new PrismaUserRepository(prisma),
     roleRepository: new PrismaRoleRepository(prisma),
@@ -153,7 +151,7 @@ async function createAuthEndpoints(
  * Part of the composition root (with `server.ts`): the only place that names the concrete
  * repositories, hasher and breached-password checker and connects them to the services.
  *
- * @param options - The pool, logger, token service, access-token verifier, key set service, refresh
+ * @param options - The Prisma client, logger, token service, access-token verifier, key set service, refresh
  *   grace window, rate limiter and its key pepper.
  * @returns The routers for the authentication endpoints, the signed-in user's endpoints and the key set.
  */
@@ -161,7 +159,7 @@ export async function composeAuthRouter(
   options: ComposeAuthRouterOptions,
 ): Promise<readonly Router[]> {
   const { logger } = options;
-  const persistence = createPersistence(options.pool);
+  const persistence = createPersistence(options.prisma);
   const usersRouter = createUsersRouter({
     authenticate: createAuthenticateMiddleware({ verifier: options.accessTokenVerifier, logger }),
     getCurrentUserService: new GetCurrentUserService({

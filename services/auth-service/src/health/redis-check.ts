@@ -1,6 +1,7 @@
 import { type DependencyCheck } from '@ticketnest/service-runtime';
 
-interface Pingable {
+/** The slice of a Redis client that the readiness check uses. */
+export interface Pingable {
   ping: () => Promise<string>;
 }
 
