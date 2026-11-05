@@ -14,7 +14,7 @@ The outbox relay (ADR-0007) publishes every event to RabbitMQ. A topic exchange 
 ### 1. One topic exchange per producing domain
 
 - A producing service declares one durable topic exchange, `<domain>.events` (`auth.events`, `catalog.events`, `booking.events`, `payment.events`; `buildEventExchangeName`), and only its own.
-- The routing key is the event `type`. The exchange is the producer's domain, not the first segment of the type (`user.registered` goes to `auth.events`), so the relay gets the domain from the service's configuration, never from a row.
+- The routing key is the event `type`. The exchange is the producer's domain, not the first segment of the type (`user.registered` goes to `auth.events`), so the domain is a constant of the service, handed to the publisher when it is built, never read from a row.
 
 ### 2. Alternate exchange and catch-all queue
 
