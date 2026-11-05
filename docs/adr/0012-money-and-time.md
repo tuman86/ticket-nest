@@ -89,6 +89,6 @@ This ADR fixes those rules once. It does **not** decide how a fee or a refund is
 ## Follow-ups
 
 - `catalog-service.openapi.yaml`: say in `schedule-in-past` that the cutoff is `SALES_CUTOFF_MINUTES`; add one sentence on the boarding-point zone to `StopPoint` and `RouteStop`; say that `timezone` on a schedule is the origin zone.
-- `common.yaml` and `packages/contracts`: `Money.currency` has `default: USD` in the spec but is required in Zod. Align them (not decided here).
+- `Money.currency` is required with no default, in both `common.yaml` and `packages/contracts` (the spec's `default: USD` was removed to match Zod). Clients send the currency explicitly.
 - Add `SALES_CUTOFF_MINUTES` to `packages/contracts` when catalog or booking is built, with a test.
 - Update `architecture.md` §10 to point at this ADR, and §14 to mark ADR-0012 as written.
