@@ -19,13 +19,16 @@
     "@ticketnest/contracts": "workspace:*",
     "@ticketnest/errors": "workspace:*",
     "@ticketnest/logger": "workspace:*",
+    "amqplib": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@testcontainers/rabbitmq": "catalog:",
     "@ticketnest/eslint-config": "workspace:*",
     "@ticketnest/tsconfig": "workspace:*",
     "@types/node": "catalog:",
     "eslint": "catalog:",
+    "testcontainers": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

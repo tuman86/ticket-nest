@@ -30,11 +30,11 @@ The outbox relay (ADR-0007) publishes every event to RabbitMQ. A topic exchange 
 
 - The arguments of an exchange cannot change after it exists. Declaring it again with different arguments fails with `PRECONDITION_FAILED` and closes the channel. The **first declaration must therefore include `alternate-exchange`**. Adding it later means deleting the exchange, which also deletes its bindings, so every consumer would have to bind again.
 - On every (re)connect the publisher declares, in this order: the alternate exchange, the catch-all queue and its binding, then `<domain>.events`. Declaring is idempotent when the arguments are equal, so it needs no existence check. The main exchange comes last so it never exists without its alternate.
-- A changed argument in code against an existing exchange stops the relay at connect. That is intended: it is a topology migration, not something to redeclare silently. The queue's arguments are immutable in the same way.
+- A changed argument in code against an existing exchange makes `connect()` fail with `TopologyDeclarationError` (ADR-0007). That is intended: it is a topology migration, not something to redeclare silently. Nothing is published while it lasts, the relay logs it at `error` on every tick, and the API keeps accepting writes into the outbox. The queue's arguments are immutable in the same way.
 
 ### 4. Messages
 
-- `persistent` (`deliveryMode` 2) on a durable exchange. The body is the outbox `payload` as is, `application/json`.
+- `persistent` (`deliveryMode` 2) on a durable exchange. The body is the envelope as JSON (`application/json`), which equals the stored outbox `payload` because the writer stored it parsed.
 - Published on a confirm channel. The publish resolves on the broker's ack and rejects on a nack or a closed channel (`EventPublisher`). Only after the ack does the relay mark the row published (ADR-0007).
 - `messageId` is the event `id`, the same value as the outbox row id and a consumer's inbox key. `type` (the event type) and `correlationId` (the envelope's) are set as well.
 - `mandatory` is not set (see 2).
@@ -67,5 +67,5 @@ A consuming service declares **its own** queues and bindings on the producer's e
 ## Follow-ups
 
 - Add the two extra names to `packages/messaging` topology names and the declaration to the relay.
-- The RabbitMQ integration test (a container) is the **first test written in the relay code PR**. Its three assertions must pass before any other relay code depends on them: (1) redeclaring the exchange with changed arguments fails with `PRECONDITION_FAILED`; (2) a message with no bound queue is routed to the catch-all queue through the alternate exchange and the confirm is an ack; (3) the catch-all quorum queue accepts `x-message-ttl` and `x-max-length` and applies them. A failure changes this ADR, not the test.
+- The RabbitMQ integration test of the three assertions was not written in the relay core PR, as this ADR first asked. It is the first test of the publisher PR (`packages/messaging/test/integration/relay/amqp-topology.test.ts`), written against plain amqplib so it checks the broker and not our code. On RabbitMQ 4.3.7 all three hold: (1) redeclaring the exchange with changed arguments, or without the alternate exchange, fails with `406 PRECONDITION_FAILED` ("inequivalent arg") and closes only that channel; (2) a message with no bound queue reaches the catch-all queue through the alternate exchange with its routing key, message id and body, and the confirm is an ack, whereas the same publish to an exchange without an alternate exchange is also acked but unroutable (a `mandatory` publish gets `basic.return` 312); (3) the catch-all is a durable quorum queue whose `x-message-ttl` and `x-max-length` the management API reports as declared, a different TTL is refused like any other changed argument, and a quorum queue with a TTL expires its messages and one with `x-max-length` drops the oldest.
 - Update `architecture.md` §6.1 and §14 (done with this ADR).
