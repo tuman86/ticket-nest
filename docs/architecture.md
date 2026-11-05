@@ -166,7 +166,7 @@ C4Component
 | Service | Owns (behaviour) | Does not own |
 |---|---|---|
 | **api-gateway** (Express 5) | Routing, rate limiting, JWT verification, request-id injection, response aggregation for the two apps. TLS terminates at the ingress. | Business rules or data |
-| **auth-service** | Users, roles, permissions, tenant membership, tokens, guest sessions, OTP | Bookings |
+| **auth-service** | Users (each operator user carries one `tenantId`), roles, permissions, tokens, guest sessions, OTP | Bookings |
 | **catalog** | Operators (tenants), venues, screens and layouts, movies, routes and stations, schedules (shows, trips, runs), prices, **cancellation policy and fee configuration**, search | Seat availability state |
 | **booking** | Seat inventory state, holds, segment logic, bookings and passengers, booking state machine, cancellation computation, **saga orchestration**, tickets (QR token and PDF) | Money movement |
 | **payment** | Stripe PaymentIntents, webhooks, payments, refunds, **refund approval queue** (support cap, admin approval) | Booking state |
@@ -185,7 +185,7 @@ C4Component
 
 | Service | Store | Key entities |
 |---|---|---|
-| auth-service | Postgres | User, Role, Permission, RolePermission, TenantMembership, RefreshToken, Otp (hashed), Outbox |
+| auth-service | Postgres | User (with a single nullable `tenantId`, operator users only), Role, Permission, RolePermission, RefreshToken, Otp (hashed), Outbox |
 | catalog | Postgres | Operator, Venue, Screen, Movie, BusLayout, Route, Stop, Train, Station, Class, Coach, Schedule, Price, CancellationPolicy, Fee, Outbox |
 | booking | Postgres + Redis | SeatInventory, **SeatClaim**, Booking, BookingItem (passenger), ScheduleSnapshot, PolicySnapshot, IdempotencyKey, Outbox, Inbox. Redis: hold keys with TTL, per-session counters |
 | payment | Postgres | Payment, Refund, RefundRequest (approval), WebhookEvent (dedupe), Outbox, Inbox |
