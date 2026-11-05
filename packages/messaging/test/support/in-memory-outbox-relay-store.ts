@@ -123,6 +123,8 @@ export class InMemoryOutboxRelayStore implements OutboxRelayStore {
     const marked = ids.filter((id) =>
       this.updateOwnedRow(claimId, id, (row) => {
         row.isPublished = true;
+        row.lockedBy = undefined;
+        row.lockedUntilMs = undefined;
       }),
     );
     return Promise.resolve(marked.length);
@@ -157,6 +159,8 @@ export class InMemoryOutboxRelayStore implements OutboxRelayStore {
     this.calls.push({ method: 'markFailed', claimId, ids: [id] });
     const isUpdated = this.updateOwnedRow(claimId, id, (row) => {
       row.isFailed = true;
+      row.lockedBy = undefined;
+      row.lockedUntilMs = undefined;
     });
     return Promise.resolve(isUpdated ? 1 : 0);
   }
@@ -171,7 +175,9 @@ export class InMemoryOutboxRelayStore implements OutboxRelayStore {
   }
 
   /**
-   * Applies a change only when the claim still holds the row.
+   * Applies a change only while the row's `lockedBy` is still the claim. Like the SQL, it does not
+   * look at the lease deadline: a claim whose lease ended keeps its row until another claim takes
+   * it, so a late confirm is still recorded.
    *
    * @param claimId - The claim that wants to change the row.
    * @param id - The row's event id.
@@ -184,10 +190,7 @@ export class InMemoryOutboxRelayStore implements OutboxRelayStore {
     change: (row: InMemoryRelayRow) => void,
   ): boolean {
     const row = this.rows.find((candidate) => candidate.id === id);
-    if (row?.lockedBy !== claimId || row.lockedUntilMs === undefined) {
-      return false;
-    }
-    if (row.lockedUntilMs < this.nowMs) {
+    if (row?.lockedBy !== claimId) {
       return false;
     }
     change(row);

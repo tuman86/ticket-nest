@@ -95,7 +95,8 @@ model Outbox {
   /// First segment of the event type (`user` for `user.registered`).
   aggregateType    String    @map("aggregate_type") @db.VarChar(64)
   aggregateId      String    @map("aggregate_id")
-  /// The relay publishes the rows of one aggregate in this order.
+  /// Version of the aggregate this event describes. Consumers compare it to ignore stale events;
+  /// the relay claims rows oldest first but guarantees no order (ADR-0007).
   aggregateVersion Int       @map("aggregate_version")
   /// Event type, also the routing key.
   type             String    @db.VarChar(128)
@@ -104,6 +105,14 @@ model Outbox {
   /// Null until the relay has had the broker confirm the message.
   publishedAt      DateTime? @map("published_at") @db.Timestamptz(3)
   attempts         Int       @default(0)
+  /// Relay lease: the row is not claimable until this database time. Also holds the retry delay
+  /// after a failed publish. Null when the row is not leased.
+  lockedUntil      DateTime? @map("locked_until") @db.Timestamptz(3)
+  /// Id of the relay claim that holds the row. Every relay update must match it, so a claim whose
+  /// lease expired cannot change a row another claim now owns.
+  lockedBy         String?   @map("locked_by")
+  /// Set when the relay gave up on the row for good. A person re-queues it by hand.
+  failedAt         DateTime? @map("failed_at") @db.Timestamptz(3)
 
   @@unique([aggregateType, aggregateId, aggregateVersion])
   @@index([publishedAt, createdAt])

@@ -15,6 +15,7 @@ paths:
 - Every create/update/delete goes through that entity's repository class (`BookingRepository`, in `src/repositories/`).
 - Import `PrismaClient` only in `src/repositories/` and the outbox/inbox helpers. Never in controllers, routes, middleware, consumers or services.
 - Repository write methods take the transaction client as a parameter.
+- One exception: a relay store (`OutboxRelayStore`, e.g. `PrismaOutboxRelayRepository`) takes no transaction. The relay publishes outside any transaction, so each of its methods is one self-contained statement on the shared client (ADR-0007).
 
 ```ts
 // Bad (controller)
