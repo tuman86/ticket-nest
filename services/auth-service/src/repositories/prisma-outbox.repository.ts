@@ -6,7 +6,8 @@ import { PrismaTransaction } from './prisma-transaction';
 import { type Transaction } from './transaction';
 
 /**
- * `OutboxStore` backed by Prisma: the only code that writes the `outbox` table.
+ * `OutboxStore` backed by Prisma: the only code that inserts into the `outbox` table. The relay's
+ * `PrismaOutboxRelayRepository` is the only code that updates its rows.
  *
  * It has no client of its own and never falls back to one. It writes through the client bound to
  * the transaction it is given, so an outbox row can never be committed apart from the state change
