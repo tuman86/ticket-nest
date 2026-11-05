@@ -3,12 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Event publishing for every service: the envelope builder, the transactional outbox writer, the store and publisher interfaces, and (in the /relay entry) the outbox relay that moves rows to the broker.",
+  "description": "Event publishing for every service: the envelope builder, the transactional outbox writer and the store and publisher interfaces; in the /relay entry the outbox relay loop and AmqpEventPublisher (the only code that names amqplib); in ./testing the in-memory fakes and the relay store contract suite, and in ./testing/rabbitmq a throwaway broker for integration tests.",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
     "./relay": "./src/relay/index.ts",
-    "./testing": "./test/support/index.ts"
+    "./testing": "./test/support/index.ts",
+    "./testing/rabbitmq": "./test/support/rabbitmq.ts"
   },
   "scripts": {
     "lint": "eslint .",
