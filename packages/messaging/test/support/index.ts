@@ -11,4 +11,10 @@ export {
   type RelayStoreCall,
 } from './in-memory-outbox-relay-store';
 export { InMemoryOutboxStore } from './in-memory-outbox-store';
+export {
+  type ContractRow,
+  describeOutboxRelayStoreContract,
+  type OutboxRelayStoreHarness,
+  type RelayRowView,
+} from './outbox-relay-store-contract';
 export { SequentialIdGenerator } from './sequential-id-generator';

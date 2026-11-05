@@ -15,8 +15,10 @@ export interface ClaimedOutboxRow {
  * (ADR-0007), so `packages/messaging` never imports a Prisma client.
  *
  * Every update names the `claimId` of the claim that took the row and changes the row only while
- * that claim still holds it. A claim whose lease expired therefore changes nothing, and the update
- * reports it by returning fewer rows than it was asked to change.
+ * that claim is still the one recorded on it, whether or not its lease has ended. A claim that
+ * another claim has since taken the row from, or that already finished with the row, therefore
+ * changes nothing, and the update reports it by returning fewer rows than it was asked to change.
+ * An update also releases the claim, so a repeated call returns 0.
  */
 export interface OutboxRelayStore {
   /**
