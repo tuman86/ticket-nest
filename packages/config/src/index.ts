@@ -7,5 +7,6 @@ export {
   refreshReuseGraceMsSchema,
 } from './refresh-reuse-grace';
 export { httpOriginSchema, originListSchema } from './origin';
+export { outboxRelayConfigShape, requireBrokerUrlWhenRelayEnabled } from './outbox-relay-config';
 export { shutdownTimeoutMsSchema } from './shutdown-timeout';
 export { trustProxyHopsSchema } from './trust-proxy-hops';
