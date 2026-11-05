@@ -78,7 +78,7 @@ One function turns the verified principal into a scope. It reads only the token,
 ## Still open (not decided here)
 
 - Whether stations are platform-only (`permissions.md` §4 question 2). The assumption there is admin-only; it is unconfirmed.
-- `TenantMembership` in `architecture.md` §5 suggests a many-to-many link, while ADR-0013 and `prd.md` §2.1 say a user belongs to exactly one tenant. The auth-service schema needs checking before booking relies on it.
+- Note: the auth-service schema has a single nullable `tenantId` on `User` (set only for operator users, not a foreign key) and no membership table, so a user belongs to at most one tenant, as ADR-0013 and `prd.md` §2.1 say. `architecture.md` §5 no longer lists `TenantMembership`. Supporting one user in several tenants would need a new table and a new ADR.
 - How an operator asks for a policy override or a new movie. No request flow exists in any document.
 - Tenant status (a suspended operator) and what happens to its live schedules.
 - Tenant scoping in booking and payment, which have no spec yet.

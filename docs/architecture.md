@@ -185,7 +185,7 @@ C4Component
 
 | Service | Store | Key entities |
 |---|---|---|
-| auth-service | Postgres | User, Role, Permission, RolePermission, TenantMembership, RefreshToken, Otp (hashed), Outbox |
+| auth-service | Postgres | User (with a single nullable `tenantId`, operator users only), Role, Permission, RolePermission, RefreshToken, Otp (hashed), Outbox |
 | catalog | Postgres | Operator, Venue, Screen, Movie, BusLayout, Route, Stop, Train, Station, Class, Coach, Schedule, Price, CancellationPolicy, Fee, Outbox |
 | booking | Postgres + Redis | SeatInventory, **SeatClaim**, Booking, BookingItem (passenger), ScheduleSnapshot, PolicySnapshot, IdempotencyKey, Outbox, Inbox. Redis: hold keys with TTL, per-session counters |
 | payment | Postgres | Payment, Refund, RefundRequest (approval), WebhookEvent (dedupe), Outbox, Inbox |
