@@ -37,6 +37,8 @@ catalog:
   '@prisma/adapter-pg': ~7.10.1
   testcontainers: ^12.2.1
   '@testcontainers/postgresql': ^12.2.1
+  '@testcontainers/rabbitmq': ^12.2.1
+  amqplib: 2.2.0 # exact on purpose: 2.2.1 is under a month old. It ships its own types (since 1.2.0), so there is no @types/amqplib.
 
 # Dependencies allowed to run install scripts. esbuild downloads its platform binary.
 allowBuilds:

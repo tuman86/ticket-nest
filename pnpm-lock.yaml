@@ -176,6 +176,9 @@ catalogs:
     '@testcontainers/postgresql':
       specifier: ^12.2.1
       version: 12.2.1
+    '@testcontainers/rabbitmq':
+      specifier: ^12.2.1
+      version: 12.2.1
     '@types/cors':
       specifier: ^2.8.19
       version: 2.8.19
@@ -191,6 +194,9 @@ catalogs:
     '@types/supertest':
       specifier: ^7.2.1
       version: 7.2.1
+    amqplib:
+      specifier: 2.2.0
+      version: 2.2.0
     cors:
       specifier: ^2.8.6
       version: 2.8.6
@@ -522,10 +528,16 @@ importers:
       '@ticketnest/logger':
         specifier: workspace:*
         version: link:../logger
+      amqplib:
+        specifier: 'catalog:'
+        version: 2.2.0
       zod:
         specifier: 'catalog:'
         version: 4.6.7
     devDependencies:
+      '@testcontainers/rabbitmq':
+        specifier: 'catalog:'
+        version: 12.2.1
       '@ticketnest/eslint-config':
         specifier: workspace:*
         version: link:../eslint-config
@@ -538,6 +550,9 @@ importers:
       eslint:
         specifier: 'catalog:'
         version: 10.14.0(jiti@2.7.0)
+      testcontainers:
+        specifier: 'catalog:'
+        version: 12.2.1
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -1572,6 +1587,9 @@ packages:
   '@testcontainers/postgresql@12.2.1':
     resolution: {integrity: sha512-MIbI5KjZ9M4SY4+xzxg/w4ZLBeV+Jd6ognXoWn7dh/mhIhBbn7ss0MiZHNg2XbCbu03BW9YQ9+H9xW8PFkJWaA==}
 
+  '@testcontainers/rabbitmq@12.2.1':
+    resolution: {integrity: sha512-vPYI7OHGcV9vtmu9hp8lYRVNJJxky+AJLG5uHiwfckMBS2vIRZZr3TR1QkziZJpoO8/nWAXyVmxhSQeHomR7lw==}
+
   '@turbo/darwin-64@2.11.10':
     resolution: {integrity: sha512-By4idRap5+nLnMuRzLB4qkOPRlvNdyY1ne4VJYDyUoUB11H94k7uif9mbe3JT8JSNXs1D68uMcBj6hJ/jMQRvA==}
     cpu: [x64]
@@ -1856,6 +1874,10 @@ packages:
 
   ajv@8.20.0:
     resolution: {integrity: sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==}
+
+  amqplib@2.2.0:
+    resolution: {integrity: sha512-VifzN9aHs/Q3zTruVHXh2yCisQyXexBN91CQ2E5iSyUKyNjH6ilYhJGte5AXZH/Bj1PaH7SwPhyuSf6Msd2udw==}
+    engines: {node: '>=18'}
 
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
@@ -4295,6 +4317,15 @@ snapshots:
       - react-native-b4a
       - supports-color
 
+  '@testcontainers/rabbitmq@12.2.1':
+    dependencies:
+      testcontainers: 12.2.1
+    transitivePeerDependencies:
+      - bare-abort-controller
+      - bare-buffer
+      - react-native-b4a
+      - supports-color
+
   '@turbo/darwin-64@2.11.10':
     optional: true
 
@@ -4666,6 +4697,8 @@ snapshots:
       fast-uri: 3.1.9
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
+
+  amqplib@2.2.0: {}
 
   ansi-regex@5.0.1: {}
 
