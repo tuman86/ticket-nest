@@ -166,7 +166,7 @@ C4Component
 | Service | Owns (behaviour) | Does not own |
 |---|---|---|
 | **api-gateway** (Express 5) | Routing, rate limiting, JWT verification, request-id injection, response aggregation for the two apps. TLS terminates at the ingress. | Business rules or data |
-| **auth-service** | Users, roles, permissions, tenant membership, tokens, guest sessions, OTP | Bookings |
+| **auth-service** | Users (each operator user carries one `tenantId`), roles, permissions, tokens, guest sessions, OTP | Bookings |
 | **catalog** | Operators (tenants), venues, screens and layouts, movies, routes and stations, schedules (shows, trips, runs), prices, **cancellation policy and fee configuration**, search | Seat availability state |
 | **booking** | Seat inventory state, holds, segment logic, bookings and passengers, booking state machine, cancellation computation, **saga orchestration**, tickets (QR token and PDF) | Money movement |
 | **payment** | Stripe PaymentIntents, webhooks, payments, refunds, **refund approval queue** (support cap, admin approval) | Booking state |
