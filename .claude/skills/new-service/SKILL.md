@@ -164,6 +164,8 @@ A service that owns data adds its database layer as a **separate change**, not a
 - `test/integration/`, `test/support/test-database.ts`, `test/support/integration-global-setup.ts` and the `integration` project in `vitest.config.ts`
 - the `postinstall` script, the Prisma dependencies, and `prisma.config.ts` in `tsconfig.json` `include`
 
+The first routes of a service are also a separate change: use the `add-endpoint` skill, one operation of `docs/api/<name>.openapi.yaml` at a time.
+
 ## Notes
 
 - The code every service shares at runtime (shutdown, readiness checks, the health router, the request id and request logger middleware) lives in `packages/service-runtime`, per `.claude/rules/code-quality.md` (logic used by two or more services belongs in `packages/*`). Fix it there, never in a service. `services/api-gateway`, the second service, skipped `postgres-check.ts` (no data) and `redis-check.ts` (its limiter fails open, so Redis must not gate readiness), and has no body parser because it streams bodies. Its `app.ts` therefore differs from the template: no `jsonBodyLimit`, and the proxy router arrives through `routers`.
