@@ -13,16 +13,16 @@ const REAL_DOCUMENT = readFileSync(
 const MINIMAL = `
 ### 2.1 Defined in a spec
 
-| Key | Allows | Spec |
-|---|---|---|
-| \`user:manage\` | Manage users | auth |
-| \`movie:manage\` | Manage movies | catalog |
+| Key | Allows | Spec | Recent login |
+|---|---|---|---|
+| \`user:manage\` | Manage users | auth | Yes |
+| \`movie:manage\` | Manage movies | catalog | |
 
 ### 2.2 Not yet
 
-| Key | Allows |
-|---|---|
-| \`refund:issue\` | Refund |
+| Key | Allows | Recent login |
+|---|---|---|
+| \`refund:issue\` | Refund | Candidate |
 
 ## 3. Default roles
 
@@ -40,6 +40,7 @@ describe('parsePermissionsDocument', () => {
       ],
       unspecified: ['refund:issue'],
       matrix: ['user:manage'],
+      recentLogin: { 'user:manage': 'yes', 'movie:manage': 'no', 'refund:issue': 'candidate' },
     });
   });
 
@@ -49,6 +50,7 @@ describe('parsePermissionsDocument', () => {
     expect(document.specified.length).toBeGreaterThan(0);
     expect(document.unspecified.length).toBeGreaterThan(0);
     expect(document.matrix.length).toBeGreaterThan(0);
+    expect(Object.values(document.recentLogin)).toContain('yes');
   });
 
   describe('a structure change in the real document throws, so no check can pass on zero rows', () => {
@@ -74,9 +76,21 @@ describe('parsePermissionsDocument', () => {
       ['a renamed Spec column', '| Spec |', '| Service |', /lacks column\(s\) Spec/],
       [
         'a renamed Key column',
-        '| Key | Allows | Spec |',
-        '| Permission | Allows | Spec |',
+        '| Key | Allows | Spec | Recent login |',
+        '| Permission | Allows | Spec | Recent login |',
         /lacks column\(s\) Key/,
+      ],
+      [
+        'a renamed Recent login column in section 2.1',
+        '| Spec | Recent login |',
+        '| Spec | Login |',
+        /lacks column\(s\) Recent login/,
+      ],
+      [
+        'a renamed Recent login column in section 2.2',
+        '| Key | Allows | Recent login |',
+        '| Key | Allows | Login |',
+        /lacks column\(s\) Recent login/,
       ],
     ])('throws for %s', (_name, from, to, message) => {
       expect(REAL_DOCUMENT).toContain(from);
@@ -111,6 +125,11 @@ describe('parsePermissionsDocument', () => {
       'a Spec other than auth or catalog',
       MINIMAL.replace('| catalog |', '| booking |'),
       /expected auth or catalog/,
+    ],
+    [
+      'a Recent login mark other than Yes, Candidate or blank',
+      MINIMAL.replace('| auth | Yes |', '| auth | Maybe |'),
+      /expected Yes, Candidate or blank/,
     ],
     [
       'a key listed twice',

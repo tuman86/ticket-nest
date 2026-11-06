@@ -7,11 +7,23 @@ const PERMISSIONS_DOC = path.resolve(import.meta.dirname, '../../../../docs/perm
 /** Shape of a permission key, written out here on purpose: the doc is checked against the code, not derived from it. */
 const BACKTICKED_KEY = /^`([a-z_]+:[a-z_]+(?::[a-z_]+)?)`$/;
 const DOCUMENTED_SPECS = ['auth', 'catalog'] as const;
+/** The cell texts a `Recent login` column may hold. A blank cell means no. */
+const RECENT_LOGIN_MARKS: Readonly<Record<string, RecentLoginMark | undefined>> = {
+  Yes: 'yes',
+  Candidate: 'candidate',
+  '': 'no',
+};
 
 /** The spec a section 2.1 key names in its `Spec` column. */
 export type DocumentedSpec = (typeof DOCUMENTED_SPECS)[number];
 
-/** What `docs/permissions.md` says, reduced to the keys. Grants and prose are not read. */
+/**
+ * A `Recent login` cell: `yes` requires a login within the last 5 minutes, `candidate` is undecided
+ * (the owner has not answered), and a blank cell is `no`.
+ */
+export type RecentLoginMark = 'yes' | 'candidate' | 'no';
+
+/** What `docs/permissions.md` says, reduced to the keys and their recent-login marks. Grants and prose are not read. */
 export interface PermissionsDocument {
   /** Section 2.1: keys defined in an OpenAPI spec, with the spec the doc names. */
   readonly specified: readonly { readonly key: string; readonly spec: DocumentedSpec }[];
@@ -19,6 +31,8 @@ export interface PermissionsDocument {
   readonly unspecified: readonly string[];
   /** Section 3: the keys that have a row in the default-roles matrix. */
   readonly matrix: readonly string[];
+  /** The `Recent login` mark of every key of sections 2.1 and 2.2. */
+  readonly recentLogin: Readonly<Record<string, RecentLoginMark>>;
 }
 
 /**
@@ -46,6 +60,33 @@ function readKeys(table: MarkdownTable, sectionNumber: string): string[] {
 }
 
 /**
+ * Reads the `Recent login` column of a table whose keys were already read.
+ *
+ * @param table - A table that has `Key` and `Recent login` columns.
+ * @param keys - The table's keys, in row order.
+ * @param sectionNumber - The section's number, for error messages.
+ * @returns Each key with its mark.
+ * @throws Error when a cell is not `Yes`, `Candidate` or blank.
+ */
+function readRecentLoginMarks(
+  table: MarkdownTable,
+  keys: readonly string[],
+  sectionNumber: string,
+): [string, RecentLoginMark][] {
+  return table.rows.map((row, index) => {
+    const key = keys[index] ?? '';
+    const cell = row['Recent login'] ?? '';
+    const mark = RECENT_LOGIN_MARKS[cell];
+    if (mark === undefined) {
+      throw new Error(
+        `Section "${sectionNumber}": the Recent login of ${key} is "${cell}", expected Yes, Candidate or blank.`,
+      );
+    }
+    return [key, mark];
+  });
+}
+
+/**
  * Narrows a `Spec` cell to a spec name.
  *
  * @param cell - The cell text.
@@ -62,7 +103,8 @@ function parseDocumentedSpec(cell: string, key: string): DocumentedSpec {
 }
 
 /**
- * Reads the keys of sections 2.1, 2.2 and 3 of the permission catalogue document.
+ * Reads the keys of sections 2.1, 2.2 and 3 of the permission catalogue document, and the recent-login
+ * mark of each key of 2.1 and 2.2.
  *
  * @param markdown - The text of `docs/permissions.md`.
  * @returns The documented keys. Never empty: every table must have rows.
@@ -70,15 +112,21 @@ function parseDocumentedSpec(cell: string, key: string): DocumentedSpec {
  *   (see `readMarkdownTable`), so a restructured document fails every check that reads it.
  */
 export function parsePermissionsDocument(markdown: string): PermissionsDocument {
-  const specifiedTable = readMarkdownTable(markdown, '2.1', ['Key', 'Spec']);
+  const specifiedTable = readMarkdownTable(markdown, '2.1', ['Key', 'Spec', 'Recent login']);
   const specifiedKeys = readKeys(specifiedTable, '2.1');
+  const unspecifiedTable = readMarkdownTable(markdown, '2.2', ['Key', 'Recent login']);
+  const unspecifiedKeys = readKeys(unspecifiedTable, '2.2');
   return {
     specified: specifiedTable.rows.map((row, index) => {
       const key = specifiedKeys[index] ?? '';
       return { key, spec: parseDocumentedSpec(row.Spec ?? '', key) };
     }),
-    unspecified: readKeys(readMarkdownTable(markdown, '2.2', ['Key']), '2.2'),
+    unspecified: unspecifiedKeys,
     matrix: readKeys(readMarkdownTable(markdown, '3.', ['Key']), '3.'),
+    recentLogin: Object.fromEntries([
+      ...readRecentLoginMarks(specifiedTable, specifiedKeys, '2.1'),
+      ...readRecentLoginMarks(unspecifiedTable, unspecifiedKeys, '2.2'),
+    ]),
   };
 }
 
