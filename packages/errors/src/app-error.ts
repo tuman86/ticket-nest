@@ -14,9 +14,14 @@ export interface AppErrorOptions {
   readonly code?: string;
   /**
    * Overrides the problem type slug for a domain error, e.g. `email-already-registered`, so the
-   * `type` URI matches the service's OpenAPI spec. Status and title stay those of the base class.
+   * `type` URI matches the service's OpenAPI spec. The status stays that of the base class.
    */
   readonly problemType?: string;
+  /**
+   * Overrides the problem title for a domain error whose spec names its own, e.g.
+   * `Recent login required`. It is also the message when there is no `detail`.
+   */
+  readonly title?: string;
   readonly headers?: Readonly<Record<string, string>>;
   /** Extra problem members (RFC 9457 extensions), e.g. `errors` for validation. */
   readonly extensions?: Readonly<Record<string, unknown>>;
@@ -37,14 +42,15 @@ export abstract class AppError extends Error {
   readonly extensions: Readonly<Record<string, unknown>>;
 
   protected constructor(definition: AppErrorDefinition, options: AppErrorOptions = {}) {
+    const title = options.title ?? definition.title;
     super(
-      options.detail ?? definition.title,
+      options.detail ?? title,
       options.cause === undefined ? undefined : { cause: options.cause },
     );
     this.name = new.target.name;
     this.status = definition.status;
     this.code = options.code ?? definition.code;
-    this.title = definition.title;
+    this.title = title;
     this.problemType = options.problemType ?? definition.problemType;
     this.detail = options.detail;
     this.headers = { ...definition.headers, ...options.headers };

@@ -1,4 +1,9 @@
 export {
+  type AccessRefusalReason,
+  type AccessScope,
+  type AccessScopeResolution,
+} from './access-scope';
+export {
   ACCESS_TOKEN_ALGORITHM,
   ACCESS_TOKEN_CLOCK_TOLERANCE_MS,
   AUTHORIZATION_HEADER_MAX_LENGTH,
@@ -6,6 +11,8 @@ export {
 export { type AccessTokenVerifier } from './access-token-verifier';
 export { type AuthenticatedPrincipal } from './authenticated-principal';
 export { HttpJwksFetcher, type HttpJwksFetcherOptions } from './http-jwks-fetcher';
+export { InsufficientPermissionError } from './insufficient-permission.error';
+export { InvalidGuardConfigurationError } from './invalid-guard-configuration.error';
 export {
   INVALID_ACCESS_TOKEN_DETAIL,
   InvalidAccessTokenError,

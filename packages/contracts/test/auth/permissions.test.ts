@@ -144,3 +144,49 @@ describe('permission catalogue against the OpenAPI specs (x-permissions keys)', 
     expect(DOCUMENT.unspecified.filter((key) => used.includes(key))).toEqual([]);
   });
 });
+
+/** Methods that only read. Every other method mutates. */
+const READ_ONLY_METHODS = ['GET', 'HEAD'];
+
+/**
+ * The per-operation rule of ADR-0025: `permissions.md` marks a permission, and the operations that
+ * mutate under it carry `x-recent-login: true`. A route accepts any of its keys, so one key marked
+ * Yes is enough to require it (otherwise a caller holding the other key would skip the check). A
+ * key marked Candidate is undecided and counts as No, so promoting it means changing the document
+ * and the spec together.
+ *
+ * @param operation - An operation that lists permissions.
+ * @returns Whether the document says the operation needs a recent login.
+ */
+function isRecentLoginRequired(operation: (typeof OPERATIONS_WITH_PERMISSIONS)[number]): boolean {
+  const isMutating = !READ_ONLY_METHODS.includes(operation.method);
+  return isMutating && operation.permissions.some((key) => DOCUMENT.recentLogin[key] === 'yes');
+}
+
+describe('permission catalogue against recent login (permissions.md and x-recent-login)', () => {
+  it('marks every catalogue key, and nothing else', () => {
+    expect(compareKeys(Object.keys(DOCUMENT.recentLogin), PERMISSION_KEYS)).toEqual({
+      missing: [],
+      unexpected: [],
+    });
+  });
+
+  it('found keys marked Yes and operations marked x-recent-login, so the check is not vacuous', () => {
+    expect(Object.values(DOCUMENT.recentLogin)).toContain('yes');
+    expect(OPERATIONS_WITH_PERMISSIONS.some((operation) => operation.recentLogin)).toBe(true);
+    expect(OPERATIONS_WITH_PERMISSIONS.some((operation) => isRecentLoginRequired(operation))).toBe(
+      true,
+    );
+  });
+
+  it('marks an operation x-recent-login exactly when it mutates and lists a key marked Yes', () => {
+    const mismatched = OPERATIONS_WITH_PERMISSIONS.filter(
+      (operation) => operation.recentLogin !== isRecentLoginRequired(operation),
+    ).map(
+      (operation) =>
+        `${operation.method} ${operation.path}: x-recent-login is ${String(operation.recentLogin)}, permissions.md says ${String(isRecentLoginRequired(operation))}`,
+    );
+
+    expect(mismatched).toEqual([]);
+  });
+});

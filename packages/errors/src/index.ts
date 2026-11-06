@@ -17,4 +17,8 @@ export {
   type ServiceUnavailableOptions,
 } from './http-errors';
 export { PROBLEM_TYPE_BASE_URL, PROBLEM_TYPE_SLUGS } from './problem-types';
+export {
+  REAUTHENTICATION_REQUIRED_DETAIL,
+  ReauthenticationRequiredError,
+} from './reauthentication-required.error';
 export { toProblem, type ProblemContext } from './to-problem';
