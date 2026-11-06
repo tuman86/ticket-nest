@@ -30,9 +30,37 @@ model Role {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  users User[]
+  users       User[]
+  permissions RolePermission[]
 
   @@map("roles")
+}
+
+/// One key of the permission catalogue (ADR-0025). The rows are seeded by migrations and mirror
+/// `PERMISSION_CATALOGUE` in packages/contracts; a key is never deleted or renamed.
+model Permission {
+  /// `resource:action[:scope]`, lower case. A CHECK constraint in the migration enforces the shape.
+  key         String @id
+  /// Text for a role-editing screen. A later migration may correct it.
+  description String
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+/// A permission held by a role. Deleting a role removes its rows; a permission that a role holds
+/// cannot be deleted or renamed, so the table can never hold a key the catalogue lacks.
+model RolePermission {
+  roleId        String @map("role_id") @db.Uuid
+  permissionKey String @map("permission_key")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionKey], references: [key], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([roleId, permissionKey])
+  @@index([permissionKey])
+  @@map("role_permissions")
 }
 
 model User {
