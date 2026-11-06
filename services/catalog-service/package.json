@@ -3,16 +3,35 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "description": "Inventory definitions, policy and search. Skeleton only: health endpoints, no business routes yet.",
   "scripts": {
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "build": "esbuild src/server.ts --bundle --platform=node --target=node24 --format=cjs --external:pg-native --define:import.meta.url=__importMetaUrl --banner:js=\"const __importMetaUrl = require('node:url').pathToFileURL(__filename).href;\" --outfile=dist/server.cjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ticketnest/config": "workspace:*",
+    "@ticketnest/errors": "workspace:*",
+    "@ticketnest/logger": "workspace:*",
+    "@ticketnest/service-runtime": "workspace:*",
+    "express": "catalog:",
+    "helmet": "catalog:",
+    "pg": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@ticketnest/eslint-config": "workspace:*",
     "@ticketnest/tsconfig": "workspace:*",
+    "@types/express": "catalog:",
     "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@types/supertest": "catalog:",
+    "esbuild": "catalog:",
     "eslint": "catalog:",
+    "supertest": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

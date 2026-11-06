@@ -21,7 +21,7 @@ pnpm format        # prettier --write .
 pnpm format:check  # prettier --check .
 ```
 
-`dev` and `build` exist only where a service is real: `auth-service` and `api-gateway` today (see their `.env.example`).
+`dev` and `build` exist only where a service is real: `auth-service`, `api-gateway` and `catalog-service` (a skeleton with health endpoints only) today (see their `.env.example`).
 The other apps and services are empty placeholders until each one is implemented.
 
 ## Layout

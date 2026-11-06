@@ -8,6 +8,14 @@ export default defineConfig({
     alias: [{ find: /^@\//, replacement: `${path.resolve(import.meta.dirname, 'src')}/` }],
   },
   test: {
-    include: ['test/unit/**/*.test.ts'],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          include: ['test/unit/**/*.test.ts'],
+        },
+      },
+    ],
   },
 });
