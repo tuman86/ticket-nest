@@ -19,12 +19,11 @@ Check each fact; do not assume it.
 1. **The service is real.** `services/<service>/src/app.ts` and `src/server.ts` exist. If it holds only the placeholder `src/index.ts`, stop, point to the `new-service` skill and offer to run it. Also stop and ask if the operation reads or writes data and the service has no `prisma/schema.prisma` or `src/repositories/` (`new-service` does not build that layer).
 2. **The operation is in the spec.** Find `<METHOD> <path>` in `docs/api/<service>.openapi.yaml`. If the file or the operation is missing, stop and ask: the spec comes first, and this skill does not invent operations. (booking-service and payment-service have no spec yet.)
 3. **Nothing it needs is unbuilt.** Read the operation's block and the model it touches. Stop if any of these applies:
-   - NOT BUILT YET: stop and ask. `x-permissions` other than `self` (the permission/role guard). `CLAUDE.md` says permission and role guards are not built; only `self` and the authentication middleware exist (design: ADR-0025).
-   - NOT BUILT YET: stop and ask. `x-recent-login: true` (the `auth_time` age check).
    - NOT BUILT YET: stop and ask. A model a tenant-scoped caller sees only for its own tenant: one with a NOT NULL tenant column, or one of the two nullable exceptions in ADR-0015 (`CancellationPolicy`, and `User`, so `GET /v1/users` with `user:read:tenant` stops here). It needs `TenantScope` and the tenant base repository from `.claude/rules/tenancy.md`. No repository takes a scope yet.
    - NOT BUILT YET: no reference list endpoint; propose the cursor-pagination pattern from common.yaml (Limit, Cursor, Page) to the user, and once approved add it to this skill. Applies to an operation with `Limit`/`Cursor` parameters or a `Page` response.
 4. **Classify the operation**, because it decides which branches of step 4 apply:
    - Public (`security: []`), optional (`security: [{}, {bearerAuth: []}]`) or protected (a bearer token)?
+   - Does it list `x-permissions` other than `self`, or `x-recent-login: true`? (Guarded endpoint.)
    - Does it verify a secret the caller sends (a password, a token)? Does it answer 204 with no body?
    - Does it write (more than one step), or only read?
    - Does the response carry tokens or personal data?
@@ -78,6 +77,14 @@ Flow is controller, service, repository (`.claude/rules/code-quality.md`). Every
 
 **Protected endpoint.** The router takes the shared `authenticate` middleware as a dependency. The controller reads the caller only through `getAuthenticatedPrincipal(response)` and passes ids to the service. Re-read the user from the database; take role and tenant from the database, not from the token. A missing or non-`ACTIVE` user gets the same 401 as an invalid token.
 
+**Guarded endpoint** (`x-permissions` other than `self`, with or without `x-recent-login: true`; design: ADR-0025). `self` needs only `authenticate`. Otherwise:
+
+- Mount the guard right after `authenticate`: `router.get('/v1/roles', authenticate, requireAccess({ permissions: ['role:manage'] }), handler)`. `requireAccess` is the `CreateAccessGuard` that `createAccessGuard({ logger })` returns (`@ticketnest/auth-middleware/express`). The composition root builds it once and the router takes it as a dependency, the way it takes `authenticate`. Any rate limiter of the route goes after the guard.
+- Pass the keys exactly as `x-permissions` lists them (holding any one is enough). They are typed `PermissionKey`, and a key outside the catalogue throws `InvalidGuardConfigurationError` when the router is built.
+- Add `recentLogin: true` for an operation marked `x-recent-login: true`. The guard checks the caller (401), then the permission (403), then the login age (401 `reauthentication-required`), and never tells a caller who lacks the permission to sign in again.
+- The permission comes from the token, so a role edit reaches a caller at the next token (up to 10 minutes, ADR-0013). Do not re-check it in the service.
+- Read the scope with `getAccessScope(response)` only when the endpoint touches a tenant-scoped model, and pass it to the service. Such a model still stops at the tenant marker in step 0. Never decide by role name or take the tenant from the request.
+
 **Protected endpoint that verifies a secret** (a current password). Rate limit it too: scope `USER_SCOPE`, read from `getAuthenticatedPrincipal(response)` inside `readIdentifiers(request, response)`; mount `authenticate`, then the limiter, then the handler.
 
 **Optional-auth endpoint.** Use `createOptionalAuthenticateMiddleware` and `findAuthenticatedPrincipal` (`undefined` means anonymous); a token that is sent must be valid.
@@ -92,7 +99,7 @@ Flow is controller, service, repository (`.claude/rules/code-quality.md`). Every
 
 ## 5. Wire it
 
-- Add the service to the router's dependencies interface and register the route.
+- Add the service to the router's dependencies interface and register the route. Mount routers at the root with full paths (`router.post('/v1/auth/login', ...)`, then `app.use(router)`), as auth-service does, so a log line can show the route pattern without a real id.
 - Build it in the composition root (`compose-*-router.ts`). It is the only place that names concrete repositories and clients. A dependency it builds privately (the hasher, `RateLimitService`) is hoisted when a second router needs it.
 - Update the test helpers that build the router, or they stop compiling: `grep -rl "createXRouter" test/support` for the router you changed, and add a stub for the new service.
 
@@ -115,7 +122,8 @@ Write the failing test, watch it fail for the right reason, then implement (`.cl
   - each typed error and its problem `type`;
   - an unexpected error becomes a generic 500 with no detail;
   - nothing secret in the body, the headers or the log lines;
-  - the generic error is identical for every failure when the endpoint must not reveal why.
+  - the generic error is identical for every failure when the endpoint must not reveal why;
+  - for a guarded endpoint: a token without the key gets the 403 that names the accepted keys, a token with it succeeds, and with `recentLogin: true` a login older than 5 minutes gets 401 `reauthentication-required`. The guard's own rules (scope, order, boundary) are tested in `packages/auth-middleware`, so do not repeat them per endpoint.
 - **Integration** (`test/integration/<area>/`, real Postgres): only what needs the database: the stored row, the unique index or conditional update under concurrency, transaction rollback, and data read at request time.
 - A signed-in caller in a test: `addUser`, `loginNewUser` or `mintAccessToken` (`test/support/`). Put a test beside the existing tests of its area (`me.test.ts` sits in `integration/auth/`). A rollback test needs a double that fails the second statement; add one if none exists.
 - Prove a guard bites: break the code once, see the test fail, then restore it.
@@ -154,5 +162,5 @@ If Docker or the infra cannot run, say so explicitly instead of reporting the en
 ## Notes
 
 - Shared behaviour lives in `packages/*`; if a second service needs something auth-service built privately, extract it there on the third use (`code-quality.md`) rather than copying it.
-- When the permission/role guard, `x-recent-login` or `TenantScope` get built, or the pagination pattern is approved, replace the matching `NOT BUILT YET` marker (grep for that text) with real steps, in the same change.
+- When `TenantScope` gets built, or the pagination pattern is approved, replace the matching `NOT BUILT YET` marker (grep for that text) with real steps, in the same change.
 - When a step here stops matching `services/auth-service`, update this skill in the same change so the template and the skill do not drift.

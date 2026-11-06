@@ -93,7 +93,7 @@ These rules were decided with the design; the guard pull request implements them
 Planned as separate pull requests, in this order:
 
 1. The constant in `packages/contracts`, with the drift test.
-2. The guard in `packages/auth-middleware`: `requirePermission`, `requireRecentLogin`, the `reauthentication-required` error, `RECENT_LOGIN_MAX_AGE_MS`, and the pure principal-to-scope function. Unit tests only, including a check of the `Recent login` column of `permissions.md` against `x-recent-login` in the specs (left out of the catalogue's drift test because it needs a per-operation rule).
+2. **Done.** The guard in `packages/auth-middleware`: one factory, `createAccessGuard`, that checks the caller, the permission and the recent login in the order of section 5 (the two checks are not exported on their own), the `reauthentication-required` error, `RECENT_LOGIN_MAX_AGE_MS`, and the pure principal-to-scope function. Unit tests only, including a check of the `Recent login` column of `permissions.md` against `x-recent-login` in the specs (left out of the catalogue's drift test because it needs a per-operation rule). The rule it checks: an operation is marked `x-recent-login: true` exactly when it mutates (any method but `GET` and `HEAD`) and lists at least one key marked Yes; a Candidate key counts as No, so promoting one changes the document and the spec together.
 3. auth-service: the migration (`permissions`, `role_permissions`, `roles.tenant_bound`, the seed), the role repository returning permissions, and its integration tests including the equality test.
 4. auth-service: login and refresh issue the role's permissions.
 5. The cursor-pagination pattern (with ADR-0016).
@@ -101,4 +101,4 @@ Planned as separate pull requests, in this order:
 7. Role create, edit and delete, with recent login, `ETag` and `If-Match`.
 8. User administration, after the tenant-scope base repository (ADR-0015) and an email path exist.
 
-When 2 is built, replace the first two `NOT BUILT YET` markers of `.claude/skills/add-endpoint/SKILL.md`; the tenant marker goes when the base repository lands, and the list marker with 5.
+The first two `NOT BUILT YET` markers of `.claude/skills/add-endpoint/SKILL.md` were replaced when 2 was built; the tenant marker goes when the base repository lands, and the list marker with 5.
