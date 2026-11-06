@@ -42,7 +42,9 @@ info:
     `inventory:create`, `booking:read:any`, `refund:issue`, `refund:approve`,
     `policy:manage`, `user:manage`, `role:manage`. Roles are named bundles of
     permissions and an admin can edit them. Each operation lists what it needs in
-    `x-permissions`; `self` means any authenticated user acting on their own record.
+    `x-permissions`; when several keys are listed, holding any one of them is enough.
+    `self` means any authenticated user acting on their own record. The full list is
+    `docs/permissions.md`; ADR-0025 sets the rules for checking them.
 
     ## Domain problem types
     | type (suffix)             | status | meaning |
@@ -54,10 +56,10 @@ info:
     | `invalid-otp`             | 422 | code wrong or expired |
     | `otp-attempts-exceeded`   | 429 | too many wrong codes; request a new code |
     | `invalid-token`           | 422 | verification or reset token invalid or expired |
-    | `system-role-immutable`   | 409 | built-in role cannot be deleted or renamed |
-    | `role-in-use`             | 409 | role still assigned to users |
+    | `system-role-immutable`   | 409 | built-in role cannot be deleted or have its key changed |
+    | `role-in-use`             | 409 | role still assigned to users (also when `tenantBound` would change) |
     | `unknown-permission`      | 422 | permission key not in the catalogue |
-    | `tenant-required`         | 422 | operator users must have a `tenantId` |
+    | `tenant-required`         | 422 | the user's role is tenant-bound (`tenantBound`) and there is no `tenantId`, or it is not and a `tenantId` was sent |
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -637,7 +639,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/ReauthenticationRequired' }
+        '401': { $ref: './common.yaml#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '409':
           description: Email already registered (`email-already-registered`).
@@ -697,7 +699,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/ReauthenticationRequired' }
+        '401': { $ref: './common.yaml#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '404': { $ref: './common.yaml#/components/responses/NotFound' }
         '412': { $ref: './common.yaml#/components/responses/PreconditionFailed' }
@@ -763,7 +765,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Role' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/ReauthenticationRequired' }
+        '401': { $ref: './common.yaml#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '409': { $ref: './common.yaml#/components/responses/Conflict' }
         '422':
@@ -819,11 +821,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Role' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/ReauthenticationRequired' }
+        '401': { $ref: './common.yaml#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '404': { $ref: './common.yaml#/components/responses/NotFound' }
         '409':
-          description: '`system-role-immutable` (tried to change the key of a built-in role).'
+          description: '`system-role-immutable` (tried to change the key or `tenantBound` of a built-in role) or `role-in-use` (tried to change `tenantBound` while users hold the role).'
           content:
             application/problem+json:
               schema: { $ref: './common.yaml#/components/schemas/Problem' }
@@ -844,7 +846,7 @@ paths:
         - $ref: './common.yaml#/components/parameters/IfMatch'
       responses:
         '204': { description: Role deleted. }
-        '401': { $ref: '#/components/responses/ReauthenticationRequired' }
+        '401': { $ref: './common.yaml#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '404': { $ref: './common.yaml#/components/responses/NotFound' }
         '409':
@@ -859,29 +861,6 @@ components:
   securitySchemes:
     bearerAuth:
       $ref: './common.yaml#/components/securitySchemes/bearerAuth'
-
-  responses:
-    ReauthenticationRequired:
-      description: |
-        Missing, expired, or invalid access token, or the token's `auth_time` is
-        older than 5 minutes (`reauthentication-required`). Sign in again with
-        `POST /v1/auth/login` to get a token with a fresh `auth_time`.
-      headers:
-        X-Request-Id: { $ref: './common.yaml#/components/headers/XRequestId' }
-        WWW-Authenticate:
-          description: Bearer challenge (RFC 6750).
-          schema: { type: string }
-      content:
-        application/problem+json:
-          schema: { $ref: './common.yaml#/components/schemas/Problem' }
-          example:
-            type: https://api.ticketnest.example/problems/reauthentication-required
-            title: Recent login required
-            status: 401
-            detail: This action needs a login within the last 5 minutes.
-            code: REAUTHENTICATION_REQUIRED
-            instance: /v1/roles/7d1c1f1e-0b8e-4b7e-8a53-2f4f7c5b9a10
-            correlationId: 3f6f4c0e-6a58-4a6b-9a1e-2b3d9c1f0a77
 
   parameters:
     UserId:
@@ -1092,7 +1071,7 @@ components:
         roleId: { $ref: './common.yaml#/components/schemas/Id' }
         tenantId:
           $ref: './common.yaml#/components/schemas/Id'
-          description: Required when the role is `OPERATOR`; forbidden otherwise.
+          description: Required when the role is tenant-bound (`tenantBound`, for example `OPERATOR`); forbidden otherwise.
 
     AdminUpdateUserRequest:
       type: object
@@ -1117,6 +1096,10 @@ components:
           description: Stable identifier, SCREAMING_SNAKE_CASE.
         name: { type: string, minLength: 1, maxLength: 80 }
         description: { type: string, maxLength: 500 }
+        tenantBound:
+          type: boolean
+          default: false
+          description: Whether users with this role must have a `tenantId`. Cannot be changed later while any user holds the role.
         permissions:
           type: array
           uniqueItems: true
@@ -1133,6 +1116,9 @@ components:
           description: Not allowed on built-in roles.
         name: { type: string, minLength: 1, maxLength: 80 }
         description: { type: string, maxLength: 500 }
+        tenantBound:
+          type: boolean
+          description: Answers `role-in-use` while any user holds the role. Not allowed on built-in roles.
         permissions:
           type: array
           uniqueItems: true
@@ -1191,7 +1177,7 @@ components:
 
     Role:
       type: object
-      required: [id, key, name, system, permissions, createdAt, updatedAt]
+      required: [id, key, name, system, tenantBound, permissions, createdAt, updatedAt]
       properties:
         id: { $ref: './common.yaml#/components/schemas/Id' }
         key: { type: string }
@@ -1200,6 +1186,9 @@ components:
         system:
           type: boolean
           description: Built-in roles (`CUSTOMER`, `OPERATOR`, `SUPPORT_AGENT`, `ADMIN`) cannot be deleted.
+        tenantBound:
+          type: boolean
+          description: Users with this role must have a `tenantId`; users with any other role must not. Only `OPERATOR` is tenant-bound among the built-in roles.
         permissions:
           type: array
           uniqueItems: true
