@@ -1,6 +1,9 @@
-import { type DependencyCheck } from '@ticketnest/service-runtime';
+import {
+  createPostgresCheck,
+  type DependencyCheck,
+  type Queryable,
+} from '@ticketnest/service-runtime';
 
-import { createPostgresCheck, type Queryable } from './postgres-check';
 import { createRedisCheck, type Pingable } from './redis-check';
 
 export interface ReadinessCheckSources {

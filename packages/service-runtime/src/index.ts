@@ -5,6 +5,7 @@ export {
   runDependencyChecks,
   type RunDependencyChecksOptions,
 } from './health/dependency-check';
+export { createPostgresCheck, type Queryable } from './health/postgres-check';
 export {
   type ClosableServer,
   createShutdown,

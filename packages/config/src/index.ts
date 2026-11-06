@@ -1,5 +1,6 @@
 export { baseConfigSchema, type BaseConfig } from './base-config-schema';
 export { ConfigError } from './config-error';
+export { jsonBodyLimitSchema } from './json-body-limit';
 export { loadConfig, type EnvironmentSource } from './load-config';
 export {
   REFRESH_REUSE_GRACE_DEFAULT_MS,
