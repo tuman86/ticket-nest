@@ -90,9 +90,7 @@ function buildApp(options: BuildAppOptions = {}): TestApp {
   };
 
   const app = express();
-  // The routes below are fixtures. This limiter exists only because CodeQL's
-  // js/missing-rate-limiting query flags routes without one; its limit is far above what the tests
-  // send.
+  // Exists only for CodeQL's missing-rate-limiting query; its limit can never fire in a test.
   app.use(
     rateLimit({
       windowMs: TEST_RATE_LIMIT_WINDOW_MS,
