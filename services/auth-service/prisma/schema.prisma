@@ -24,6 +24,9 @@ model Role {
   name        String
   description String?
   isSystem    Boolean  @default(false) @map("is_system")
+  /// Users of this role must have a `tenantId`; users of any other role must not (ADR-0025). Set
+  /// when the role is created. Only `OPERATOR` is tenant-bound among the built-in roles.
+  tenantBound Boolean  @default(false) @map("tenant_bound")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
