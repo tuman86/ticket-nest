@@ -18,7 +18,7 @@ This ADR decides what the catalogue is and where it lives, how roles are adminis
 - The source is a typed constant in `packages/contracts`: each key with its description. `docs/permissions.md` is the human-readable list of the same keys.
 - auth-service stores it in a `permissions` table (`key` primary key, `description`). `role_permissions` links a role to a key with a foreign key, so the database can never hold an unknown key. A role's permissions are rows of `role_permissions`.
 - Migrations are hand-written, reviewed SQL (`database.md`). The first one creates both tables and seeds the catalogue and the default grants (section 3). A later key is a new migration that only adds: `INSERT ... ON CONFLICT DO NOTHING` for the key, plus grants of that **new** key to the default roles it belongs to. A migration never deletes a key and never updates or deletes a grant, so what an admin edited is not reset. A description may be corrected by a later migration, because it is catalogue text, not an admin edit.
-- An integration test migrates a fresh database and requires the `permissions` table (keys and descriptions) to equal the constant. A unit test requires the constant to match `permissions.md` and every `x-permissions` key in both OpenAPI specs (the way the gateway's access-rules test compares its list with the specs).
+- An integration test migrates a fresh database and requires the `permissions` table (keys and descriptions) to equal the constant. A unit test requires the constant's keys to match `permissions.md` and every `x-permissions` key in both OpenAPI specs (keys only; descriptions are compared only with the table, by the integration test above), the way the gateway's access-rules test compares its list with the specs.
 - A key therefore changes in five places in one change: the constant, `permissions.md`, the spec's `x-permissions`, an add-only migration, and the tests above. `GET /v1/permissions` answers from the table.
 
 ### 2. Roles
@@ -93,7 +93,7 @@ These rules were decided with the design; the guard pull request implements them
 Planned as separate pull requests, in this order:
 
 1. The constant in `packages/contracts`, with the drift test.
-2. The guard in `packages/auth-middleware`: `requirePermission`, `requireRecentLogin`, the `reauthentication-required` error, `RECENT_LOGIN_MAX_AGE_MS`, and the pure principal-to-scope function. Unit tests only.
+2. The guard in `packages/auth-middleware`: `requirePermission`, `requireRecentLogin`, the `reauthentication-required` error, `RECENT_LOGIN_MAX_AGE_MS`, and the pure principal-to-scope function. Unit tests only, including a check of the `Recent login` column of `permissions.md` against `x-recent-login` in the specs (left out of the catalogue's drift test because it needs a per-operation rule).
 3. auth-service: the migration (`permissions`, `role_permissions`, `roles.tenant_bound`, the seed), the role repository returning permissions, and its integration tests including the equality test.
 4. auth-service: login and refresh issue the role's permissions.
 5. The cursor-pagination pattern (with ADR-0016).

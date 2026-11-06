@@ -19,11 +19,20 @@ export interface OpenApiOperation {
   readonly access: OpenApiAccess;
   /** The service whose spec lists it. */
   readonly service: OpenApiService;
+  /**
+   * The operation's `x-permissions`: holding any one of them is enough. `self` is a marker, not a
+   * key. Empty when the operation has none (public and optional-auth operations).
+   */
+  readonly permissions: readonly string[];
+  /** Whether the operation is marked `x-recent-login: true`. */
+  readonly recentLogin: boolean;
 }
 
 /** Only the parts of an operation this reader looks at; everything else is ignored. */
 const OperationFields = z.looseObject({
   security: z.array(z.record(z.string(), z.array(z.string()))).optional(),
+  'x-permissions': z.array(z.string().min(1)).optional(),
+  'x-recent-login': z.boolean().optional(),
 });
 
 /** A spec, as far as this reader goes: its path items, each keyed by method or other field. */
@@ -55,8 +64,9 @@ function resolveAccess(
  * @param text - The YAML of the spec.
  * @param service - The service the spec belongs to, copied onto every operation.
  * @returns Every operation, in the order the spec lists them.
- * @throws Error when the text is not a spec with `paths`, or a path item is a `$ref` (this reader
- *   does not follow references, and skipping one would silently drop its operations).
+ * @throws Error when the text is not a spec with `paths`, an `x-permissions` is not a list of
+ *   non-empty strings, or a path item is a `$ref` (this reader does not follow references, and
+ *   skipping one would silently drop its operations).
  */
 export function parseOpenApiOperations(text: string, service: OpenApiService): OpenApiOperation[] {
   const document = OpenApiDocument.parse(parse(text));
@@ -73,6 +83,8 @@ export function parseOpenApiOperations(text: string, service: OpenApiService): O
         path: pathName,
         access: resolveAccess(fields.security),
         service,
+        permissions: fields['x-permissions'] ?? [],
+        recentLogin: fields['x-recent-login'] === true,
       });
     }
   }
