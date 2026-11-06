@@ -1,6 +1,6 @@
 import { createPublicKey, randomUUID } from 'node:crypto';
 
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { ACCESS_TOKEN_CLOCK_TOLERANCE_MS } from '@/access-token-constants';
 import { InvalidAccessTokenError } from '@/invalid-access-token.error';
@@ -88,20 +88,41 @@ describe('JwtAccessTokenVerifier', () => {
   });
 
   describe('clock tolerance', () => {
+    afterEach(() => {
+      clock.unfreeze();
+    });
+
+    /**
+     * Mints a token on the test clock at a whole second, with its issue time and lifetime stated
+     * outright, so the instant it expires is known exactly.
+     *
+     * @returns The token and the instant it expires, in epoch milliseconds.
+     */
+    async function mintOnTestClock(): Promise<{ token: string; expiresAtMs: number }> {
+      const issuedAtMs = Math.floor(clock.now().getTime() / SECOND_MS) * SECOND_MS;
+      const token = await mintAccessToken({
+        privateKey: keys.privateKey,
+        issuedAt: new Date(issuedAtMs),
+        lifetimeSeconds: ACCESS_TOKEN_LIFETIME_MS / SECOND_MS,
+      });
+      return { token, expiresAtMs: issuedAtMs + ACCESS_TOKEN_LIFETIME_MS };
+    }
+
+    // Each test freezes the clock at an instant computed from the token's own expiry. A clock that
+    // keeps running would let the time the test takes (or the fraction of a second the token was
+    // minted at) move the verifier across the boundary it is checking.
     it('accepts a token that expired within the tolerance', async () => {
-      const token = await mintAccessToken({ privateKey: keys.privateKey });
-      clock.advance(ACCESS_TOKEN_LIFETIME_MS + ACCESS_TOKEN_CLOCK_TOLERANCE_MS - SECOND_MS);
+      const { token, expiresAtMs } = await mintOnTestClock();
+      clock.freezeAt(new Date(expiresAtMs + ACCESS_TOKEN_CLOCK_TOLERANCE_MS - SECOND_MS));
 
       await expect(verifier.verify(token)).resolves.toBeDefined();
-      clock.advance(-(ACCESS_TOKEN_LIFETIME_MS + ACCESS_TOKEN_CLOCK_TOLERANCE_MS - SECOND_MS));
     });
 
     it('refuses a token that expired beyond the tolerance', async () => {
-      const token = await mintAccessToken({ privateKey: keys.privateKey });
-      clock.advance(ACCESS_TOKEN_LIFETIME_MS + ACCESS_TOKEN_CLOCK_TOLERANCE_MS + SECOND_MS);
+      const { token, expiresAtMs } = await mintOnTestClock();
+      clock.freezeAt(new Date(expiresAtMs + ACCESS_TOKEN_CLOCK_TOLERANCE_MS + SECOND_MS));
 
       expect(await reasonFor(token)).toBe('expired');
-      clock.advance(-(ACCESS_TOKEN_LIFETIME_MS + ACCESS_TOKEN_CLOCK_TOLERANCE_MS + SECOND_MS));
     });
 
     it('can be set to zero for a verifier that shares the signer clock', async () => {
@@ -114,11 +135,10 @@ describe('JwtAccessTokenVerifier', () => {
         clockToleranceMs: 0,
         now: clock.now,
       });
-      const token = await mintAccessToken({ privateKey: keys.privateKey });
-      clock.advance(ACCESS_TOKEN_LIFETIME_MS + SECOND_MS);
+      const { token, expiresAtMs } = await mintOnTestClock();
+      clock.freezeAt(new Date(expiresAtMs + SECOND_MS));
 
       await expect(strictVerifier.verify(token)).rejects.toMatchObject({ reason: 'expired' });
-      clock.advance(-(ACCESS_TOKEN_LIFETIME_MS + SECOND_MS));
     });
   });
 
