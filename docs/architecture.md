@@ -541,6 +541,7 @@ Format: MADR, stored as `docs/adr/NNNN-title.md`.
 | 0022 | Testing strategy: pyramid, Testcontainers, contract tests, k6 |
 | 0023 | Deployment: Docker, EKS, Terraform, secrets, ingress, CI/CD |
 | 0024 | Ticket generation and QR token signing |
+| 0025 | [Permission catalogue, role administration and the permission guard](adr/0025-permission-guard.md) |
 
 ---
 

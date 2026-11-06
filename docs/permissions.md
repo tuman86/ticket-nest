@@ -3,17 +3,17 @@
 **Status:** Draft · **Date:** 2026-11-02
 **Related:** [`prd.md`](./prd.md) §2.1 · [`adr/0013-auth-strategy.md`](./adr/0013-auth-strategy.md) · [`api/auth-service.openapi.yaml`](./api/auth-service.openapi.yaml) · [`api/catalog-service.openapi.yaml`](./api/catalog-service.openapi.yaml)
 
-This is the single list of permission keys the platform understands. It is the source for `GET /v1/permissions` and for the auth-service seed data. The PRD's indicative matrix points here for the final list.
+This is the single list of permission keys the platform understands. Its keys are mirrored by a typed constant in `packages/contracts`, which is the source for `GET /v1/permissions` and for the auth-service seed data ([ADR-0025](./adr/0025-permission-guard.md)). The PRD's indicative matrix points here for the final list.
 
 Grants marked **[Assumption]** are not in the PRD or any spec and were never confirmed by the owner.
 
 ## 1. Key format
 
 - Shape: `resource:action[:scope]`, lower case, matching `^[a-z_]+:[a-z_]+(:[a-z_]+)?$` (`PermissionKey` in the auth spec).
-- `scope` narrows who the permission applies to: `own` (the caller's own record), `tenant` (the caller's tenant), `any` (everything). No scope means the action itself is the whole grant.
+- `scope` narrows who the permission applies to: `own` (the caller's own record), `tenant` (the caller's tenant), `any` (everything). No scope means the action itself is the whole grant. The suffix is a label: the guard decides the scope from the token's `tenantId`, and a suffix never widens it (ADR-0025).
 - `self` is not a permission. It marks operations any authenticated user may perform on their own record, so it never appears in a role.
 - Permissions are copied into the access token as `permissions[]` and verified by each service. Changes reach users on their next token (at most 10 minutes).
-- A key has to be added here, to `x-permissions` in the owning spec, and to the auth-service seed in the same change.
+- A key has to be added here, to the constant in `packages/contracts`, to `x-permissions` in the owning spec, and in an add-only auth-service migration, in the same change. Two tests compare them (ADR-0025). A migration never deletes a key or resets a grant an admin edited.
 
 ## 2. Catalogue
 
@@ -55,7 +55,7 @@ Grants marked **[Assumption]** are not in the PRD or any spec and were never con
 
 The four built-in roles (`system: true`) cannot be deleted. An admin may edit their permissions, but not their `key`. Guests have no role. `CUSTOMER` holds no catalogue permissions: searching, booking and managing one's own bookings are `self` operations.
 
-Legend: ✓ grants it by the PRD matrix · ✓* **[Assumption]** · blank means not granted.
+Legend: ✓ grants it by the PRD matrix · ✓* **[Assumption]**, seeded for `ADMIN` only until the owner confirms it (ADR-0025) · blank means not granted.
 
 | Key | `CUSTOMER` | `OPERATOR` | `SUPPORT_AGENT` | `ADMIN` |
 |---|:-:|:-:|:-:|:-:|
@@ -77,7 +77,7 @@ Legend: ✓ grants it by the PRD matrix · ✓* **[Assumption]** · blank means 
 | `policy:manage` | | | | ✓ |
 | `fee:manage` | | | | ✓ |
 | `booking:read:any` | | | ✓ | ✓ |
-| `booking:read:tenant` | | ✓ | | ✓ |
+| `booking:read:tenant` | | ✓* | | ✓ |
 | `booking:cancel:any` | | | ✓* | ✓ |
 | `refund:issue` | | | ✓ | ✓ |
 | `refund:approve` | | | | ✓ |
