@@ -125,8 +125,12 @@ export class InMemoryUserRepository implements UserRepository, Snapshottable {
 export class InMemoryRoleRepository implements RoleRepository {
   /**
    * @param roles - The roles that exist.
+   * @param permissionKeysByRoleId - The keys each role holds; a role not listed holds none.
    */
-  constructor(private readonly roles: readonly RoleRecord[] = [CUSTOMER_ROLE]) {}
+  constructor(
+    private readonly roles: readonly RoleRecord[] = [CUSTOMER_ROLE],
+    private readonly permissionKeysByRoleId: Readonly<Record<string, readonly string[]>> = {},
+  ) {}
 
   /** @inheritdoc */
   findById(id: string): Promise<RoleRecord | null> {
@@ -136,6 +140,11 @@ export class InMemoryRoleRepository implements RoleRepository {
   /** @inheritdoc */
   findByKey(key: string): Promise<RoleRecord | null> {
     return Promise.resolve(this.roles.find((role) => role.key === key) ?? null);
+  }
+
+  /** @inheritdoc */
+  findPermissionKeys(roleId: string): Promise<readonly string[]> {
+    return Promise.resolve([...(this.permissionKeysByRoleId[roleId] ?? [])].sort());
   }
 }
 
