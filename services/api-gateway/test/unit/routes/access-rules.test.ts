@@ -1,10 +1,9 @@
+import { readOpenApiOperations } from '@ticketnest/contracts/testing';
 import { describe, expect, it } from 'vitest';
 
 import { ACCESS_RULES, UNBUILT_PUBLIC_AUTH_OPERATIONS } from '@/routes/access-rules';
 import { resolveAccessMode } from '@/routes/resolve-access-mode';
 import { resolveRoute } from '@/routes/resolve-route';
-
-import { readOpenApiOperations } from '../../support/read-openapi-operations';
 
 const PATH_PARAMETER = /\{[^/}]+\}/g;
 const SAMPLE_SEGMENT = 'sample-id';
