@@ -26,7 +26,7 @@ The design has to satisfy these constraints:
 - Signing key: auth-service reads one Ed25519 private key from the environment (`JWT_PRIVATE_KEY`, base64 of the PKCS#8 PEM, with `JWT_ISSUER`, `JWT_AUDIENCE`). It is validated at startup and never committed. Only this key signs.
 - Key id: the `kid` of a key is its RFC 7638 JWK thumbprint, computed at startup, so it cannot mismatch its key and needs no configuration. (An earlier draft used a configured `JWT_KEY_ID`; it was removed. Tokens issued under the old id are refused for at most one access-token lifetime.)
 - Verify-only keys: `JWT_ADDITIONAL_PUBLIC_KEYS` (comma-separated base64 SPKI PEMs, at most 3, Ed25519 only) holds a retiring key or an upcoming key. They are published in the JWKS and verify tokens, never sign. A private key, a non-Ed25519 key or a duplicate stops startup.
-- Until the permission catalogue is seeded in auth-service's database, `permissions[]` is issued empty.
+- Until the permission catalogue is seeded in auth-service's database, `permissions[]` is issued empty. The catalogue, its seed and the guard are decided in [ADR-0025](0025-permission-guard.md).
 - auth-service publishes the public keys at `/.well-known/jwks.json` (unversioned, unauthenticated, `GET`/`HEAD` only, media type `application/jwk-set+json`). The gateway and every service verify with the public key only, cache the key set, and refetch it (with a cooldown) when they see an unknown `kid`. Only auth-service holds the private key. The endpoint is for platform-internal callers: it is not routed through the gateway for now.
 - The key set is built once at startup, never per request. It is served with a strong `ETag` (304 on `If-None-Match`) and `Cache-Control: public, max-age=300`.
 - Key rotation works by overlap: publish the new key, **wait at least the 300 s cache lifetime** (counted from the last replica), start signing with it, and keep the old public key in the set until the last token signed with it has expired (10 minutes). Steps and the emergency variant are in `docs/runbooks/jwt-key-rotation.md`.
@@ -77,7 +77,7 @@ This ADR keeps the permission-based RBAC already defined in the PRD. It does not
 
 Risky actions require a recent password login, instead of shortening every token. Refreshing does not update `auth_time`, so it only moves when the user actually signs in again.
 
-- Sensitive actions: `refund:approve`, `refund:issue`, role and permission edits, `policy:manage`, and user disabling. The final list lives with the permission catalogue.
+- Sensitive actions: `refund:approve`, `refund:issue`, role and permission edits, `policy:manage`, and user disabling. The final list lives with the permission catalogue (`x-recent-login` in the specs, [ADR-0025](0025-permission-guard.md)).
 - The owning service rejects the call when `auth_time` is older than 5 minutes (`RECENT_LOGIN_MAX_AGE_MS`). The client then asks for the password again and receives a token with a new `auth_time`.
 
 ### Login

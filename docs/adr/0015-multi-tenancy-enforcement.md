@@ -3,7 +3,7 @@
 - **Status:** Proposed (a **[Rec]** decision from [`architecture.md`](../architecture.md) §10 and §14, not yet ratified)
 - **Date:** 2026-11-05
 - **Deciders:** Project owner
-- **Related:** [`architecture.md`](../architecture.md) §6.2, §10, §14 and §15 item 5, [`prd.md`](../prd.md) §2.1, [`permissions.md`](../permissions.md), [`catalog-service.openapi.yaml`](../api/catalog-service.openapi.yaml), ADR-0011, ADR-0013, `.claude/rules/data-access.md`
+- **Related:** [`architecture.md`](../architecture.md) §6.2, §10, §14 and §15 item 5, [`prd.md`](../prd.md) §2.1, [`permissions.md`](../permissions.md), [`catalog-service.openapi.yaml`](../api/catalog-service.openapi.yaml), ADR-0011, ADR-0013, [ADR-0025](0025-permission-guard.md), `.claude/rules/data-access.md`
 
 ## Context and problem
 
@@ -31,7 +31,7 @@ One function turns the verified principal into a scope. It reads only the token,
 | `tenant` | The token has a `tenantId` | Every query is limited to that tenant. An `operatorId` filter sent by the caller is overridden by it. |
 | `all` | The token has no `tenantId` and holds the permission the route requires (`x-permissions`) | No tenant filter. An `operatorId` query parameter is an ordinary filter. On create, `operatorId` is required (`operator-required`). |
 
-- The permission guard runs first, so a caller who lacks the route's permission never reaches scope resolution.
+- The permission guard runs first, so a caller who lacks the route's permission never reaches scope resolution. The guard's rules, including how a key's scope suffix (`:tenant`, `:any`) relates to these scopes, are in [ADR-0025](0025-permission-guard.md): the suffix never widens a scope, and a token with a `tenantId` always gets `tenant` scope.
 - Another tenant's resource, read or written under `tenant` scope, answers `404`.
 - A consumer of an event writes under a `tenant` scope built from the event's `tenantId` (decision 6), never under `all`.
 
@@ -45,8 +45,9 @@ One function turns the verified principal into a scope. It reads only the token,
 ### 4. Platform rows with no tenant
 
 - `CancellationPolicy` is one table. A platform default is a row whose tenant column (`operatorId` in the spec) is `null`; an operator override carries the operator's id.
-- This is the **one** documented exception to "tenant column is `NOT NULL`". The policy repository states it in code: reads under `tenant` and `public` scope return the caller's own rows plus the null rows; creating or superseding a null row needs `all` scope. The test guard recognises the null-row read as allowed on this model only.
+- This is the first of **two** documented exceptions to "tenant column is `NOT NULL`" (the second is `User`, below). The policy repository states it in code: reads under `tenant` and `public` scope return the caller's own rows plus the null rows; creating or superseding a null row needs `all` scope. The test guard recognises the null-row read as allowed on this model only.
 - Resolution of the policy for a schedule is one query: the operator's active policy for the vertical, otherwise the platform default (`catalog-service.openapi.yaml`).
+- **`User` (auth-service) is the second exception, and the opposite kind.** `users.tenant_id` is nullable because customers, support agents and admins have no tenant; only users of a tenant-bound role carry one (ADR-0025). A read under `tenant` scope (`user:read:tenant`) filters on `tenant_id = :tenantId` and **never matches the null rows**: a tenant-scoped caller sees only users of its own tenant, and a customer or admin is another tenant's resource, so it answers `404`. Under `all` scope there is no tenant filter. The test guard recognises this model's nullable column, and the repository's isolation test asserts that a null-tenant user is not found under any tenant scope.
 - Every other tenant-owned model has a `NOT NULL` tenant column.
 
 ### 5. Which catalog data is tenant-owned

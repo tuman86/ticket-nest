@@ -22,7 +22,10 @@ info:
     * **Public reads** (no token needed): movies, venues, screens, stations,
       routes, trains, published schedules, search, cancellation policies. Marked
       with optional auth; a staff token widens what is returned.
-    * **Staff writes** need a permission (see `x-permissions` on each operation).
+    * **Staff writes** need a permission (see `x-permissions` on each operation; when
+      several keys are listed, holding any one of them is enough). Operations marked
+      `x-recent-login: true` also need a password login within the last 5 minutes and
+      answer `reauthentication-required` (401) otherwise (ADR-0025).
     * **Tenancy:** operator users act only on resources whose `operatorId`
       equals the `tenantId` claim of their token. Other tenants' resources answer
       `404`. Admins act on any tenant and must pass `operatorId` when creating
@@ -58,6 +61,7 @@ info:
     | `incomplete-fare-table`    | 422 | train run fare table misses a class or station pair |
     | `invalid-layout`           | 422 | seat ids not unique or positions outside the grid |
     | `invalid-policy-tiers`     | 422 | tiers not strictly descending or last tier is not 0 hours |
+    | `reauthentication-required` | 401 | the operation needs a password login within the last 5 minutes |
     | `operator-required`        | 422 | admin created an operator-owned resource without `operatorId` |
     | `schedule-in-past`         | 422 | start is before the sales cutoff (`SALES_CUTOFF_MINUTES`: movies 15, buses 60, trains 240; ADR-0012) |
   license:
@@ -1518,6 +1522,7 @@ paths:
         supersedes the previous active version. Existing bookings keep the policy
         snapshot taken when they were held.
       x-permissions: ['policy:manage']
+      x-recent-login: true
       requestBody:
         required: true
         content:
@@ -1541,7 +1546,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CancellationPolicy' }
         '400': { $ref: './common.yaml#/components/responses/BadRequest' }
-        '401': { $ref: './common.yaml#/components/responses/Unauthorized' }
+        '401': { $ref: './common.yaml#/components/responses/ReauthenticationRequired' }
         '403': { $ref: './common.yaml#/components/responses/Forbidden' }
         '404':
           description: The referenced operator does not exist.
