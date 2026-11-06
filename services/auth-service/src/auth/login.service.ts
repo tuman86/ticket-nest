@@ -104,7 +104,7 @@ export class LoginService {
     const accessToken = await this.dependencies.tokenService.signAccessToken({
       userId: user.id,
       roleKey: role.key,
-      // Role permissions are not stored yet (they arrive with the permission catalogue seed).
+      // The role's permissions are stored but not issued yet: ADR-0025 follow-up 4 reads them here.
       permissions: [],
       tenantId: user.tenantId,
       authTime,
