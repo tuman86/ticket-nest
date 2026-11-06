@@ -79,6 +79,7 @@ These rules were decided with the design; the guard pull request implements them
 - Merge-patch, `ETag`, `If-Match` and the 412 answer for role edits, and the cursor-pagination pattern for the list endpoints. Both belong to ADR-0016 (API style), which is not written.
 - Email delivery for `POST /v1/users`: the new staff user "receives an email to set a password", and no notification path exists.
 - Who owns stations (`permissions.md` §4 question 2, ADR-0015).
+- Whether the database enforces the tenant-bound rule of section 2 (`users.tenant_id` is set exactly when the user's role has `tenant_bound`). Today only the service layer can, and no code path creates a user with a role other than `CUSTOMER`, so no row can break it. Two options, to decide when follow-up 8 introduces user writes: a constraint trigger on `users` (role or tenant change) and on `roles` (`tenant_bound` change), with a check of existing rows when it is added (a trigger, unlike a `CHECK`, does not look at them); or a denormalised `users.role_tenant_bound` column with a composite foreign key to `roles`, which would also make `role-in-use` a database rule at the cost of every user insert carrying the column.
 
 ## Consequences
 
@@ -94,8 +95,8 @@ Planned as separate pull requests, in this order:
 
 1. The constant in `packages/contracts`, with the drift test.
 2. **Done.** The guard in `packages/auth-middleware`: one factory, `createAccessGuard`, that checks the caller, the permission and the recent login in the order of section 5 (the two checks are not exported on their own), the `reauthentication-required` error, `RECENT_LOGIN_MAX_AGE_MS`, and the pure principal-to-scope function. Unit tests only, including a check of the `Recent login` column of `permissions.md` against `x-recent-login` in the specs (left out of the catalogue's drift test because it needs a per-operation rule). The rule it checks: an operation is marked `x-recent-login: true` exactly when it mutates (any method but `GET` and `HEAD`) and lists at least one key marked Yes; a Candidate key counts as No, so promoting one changes the document and the spec together.
-3. auth-service: the migration (`permissions`, `role_permissions`, `roles.tenant_bound`, the seed), the role repository returning permissions, and its integration tests including the equality test.
-4. auth-service: login and refresh issue the role's permissions.
+3. **Done.** auth-service: the migrations (`roles.tenant_bound`; `permissions` and `role_permissions` with the seed), the role repository returning permissions (`findPermissionKeys`), and its integration tests including the equality test. The seed test also compares each role's grants with section 3 of `permissions.md` through `readGrantMatrix`.
+4. auth-service: login and refresh issue the role's permissions. They also fail closed: when the user's role is tenant-bound and the user has no `tenantId`, they issue no token, because a token without a `tenantId` gets `all` scope from the guard. The answer is the same generic 401 as any other failure of that endpoint, and the reason (ids only) goes to the log. This is the safeguard until the database or the user writes of follow-up 8 enforce the rule.
 5. The cursor-pagination pattern (with ADR-0016).
 6. `GET /v1/permissions`, `GET /v1/roles` and `GET /v1/roles/{roleId}`.
 7. Role create, edit and delete, with recent login, `ETag` and `If-Match`.

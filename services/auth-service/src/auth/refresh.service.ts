@@ -205,7 +205,7 @@ export class RefreshService {
     const accessToken = await tokenService.signAccessToken({
       userId: user.id,
       roleKey: role.key,
-      // Role permissions are not stored yet (they arrive with the permission catalogue seed).
+      // The role's permissions are stored but not issued yet: ADR-0025 follow-up 4 reads them here.
       permissions: [],
       tenantId: user.tenantId,
       // Copied from the stored session, never reset: a refresh is not a password login.

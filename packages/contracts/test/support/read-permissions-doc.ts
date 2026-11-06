@@ -3,7 +3,8 @@ import path from 'node:path';
 
 import { type MarkdownTable, readMarkdownTable } from './read-markdown-table';
 
-const PERMISSIONS_DOC = path.resolve(import.meta.dirname, '../../../../docs/permissions.md');
+/** Where `docs/permissions.md` is, for every reader of it. */
+export const PERMISSIONS_DOC = path.resolve(import.meta.dirname, '../../../../docs/permissions.md');
 /** Shape of a permission key, written out here on purpose: the doc is checked against the code, not derived from it. */
 const BACKTICKED_KEY = /^`([a-z_]+:[a-z_]+(?::[a-z_]+)?)`$/;
 const DOCUMENTED_SPECS = ['auth', 'catalog'] as const;
@@ -43,7 +44,7 @@ export interface PermissionsDocument {
  * @returns The keys in table order, without their backticks.
  * @throws Error when a key cell is not a backticked key, or a key appears twice.
  */
-function readKeys(table: MarkdownTable, sectionNumber: string): string[] {
+export function readKeys(table: MarkdownTable, sectionNumber: string): string[] {
   const keys = table.rows.map((row) => {
     const cell = row.Key ?? '';
     const key = BACKTICKED_KEY.exec(cell)?.[1];

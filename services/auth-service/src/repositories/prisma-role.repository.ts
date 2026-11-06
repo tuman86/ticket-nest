@@ -34,4 +34,18 @@ export class PrismaRoleRepository implements RoleRepository {
       select: { id: true, key: true, name: true },
     });
   }
+
+  /**
+   * @param roleId - The role's id.
+   * @param tx - Transaction to read in, when the call is part of one.
+   * @returns The role's permission keys sorted by code unit; empty when it has none or does not
+   * exist.
+   */
+  async findPermissionKeys(roleId: string, tx?: Transaction): Promise<readonly string[]> {
+    const grants = await selectExecutor(this.client, tx).rolePermission.findMany({
+      where: { roleId },
+      select: { permissionKey: true },
+    });
+    return grants.map((grant) => grant.permissionKey).sort();
+  }
 }

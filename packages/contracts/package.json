@@ -3,14 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Zod schemas shared across services and apps. In ./testing, the OpenAPI operation reader that test code in several workspaces shares.",
+  "description": "Zod schemas shared across services and apps. In ./testing, the readers of the OpenAPI specs and of the default-role grants in docs/permissions.md that test code in several workspaces shares.",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
     "./auth": "./src/auth/index.ts",
     "./common": "./src/common/index.ts",
     "./events": "./src/events/index.ts",
-    "./testing": "./test/support/read-openapi-operations.ts"
+    "./testing": "./test/support/testing.ts"
   },
   "scripts": {
     "lint": "eslint .",
