@@ -2,6 +2,7 @@ import { createPrivateKey, createPublicKey, type KeyObject } from 'node:crypto';
 
 import {
   baseConfigSchema,
+  jsonBodyLimitSchema,
   originListSchema,
   outboxRelayConfigShape,
   refreshReuseGraceMsSchema,
@@ -13,10 +14,8 @@ import { z } from 'zod';
 
 export const SERVICE_NAME = 'auth-service';
 
-const DEFAULT_JSON_BODY_LIMIT = '100kb';
 /** A pepper shorter than this is easier to guess than the emails it is meant to protect. */
 const RATE_LIMIT_PEPPER_MIN_LENGTH = 32;
-const BODY_LIMIT_PATTERN = /^\d+(b|kb|mb)$/i;
 
 const INVALID_PRIVATE_KEY_MESSAGE = 'must be a base64-encoded PKCS#8 PEM of an Ed25519 private key';
 
@@ -118,7 +117,7 @@ export const authConfigSchema = baseConfigSchema
      */
     TRUST_PROXY_HOPS: trustProxyHopsSchema,
     CORS_ORIGINS: originListSchema,
-    JSON_BODY_LIMIT: z.string().regex(BODY_LIMIT_PATTERN).default(DEFAULT_JSON_BODY_LIMIT),
+    JSON_BODY_LIMIT: jsonBodyLimitSchema,
     SHUTDOWN_TIMEOUT_MS: shutdownTimeoutMsSchema,
     /** `RABBITMQ_URL` and the `OUTBOX_RELAY_*` settings of the relay that publishes `user.registered`. */
     ...outboxRelayConfigShape,
