@@ -5,6 +5,7 @@ export const PROBLEM_TYPE_SLUGS = {
   malformedRequest: 'malformed-request',
   requestRejected: 'request-rejected',
   unauthenticated: 'unauthenticated',
+  reauthenticationRequired: 'reauthentication-required',
   forbidden: 'forbidden',
   notFound: 'not-found',
   methodNotAllowed: 'method-not-allowed',

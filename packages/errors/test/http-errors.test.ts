@@ -62,6 +62,17 @@ describe('http errors', () => {
     });
   });
 
+  it('lets a domain error override the title, keeping the status of its base class', () => {
+    const error = new UnauthorizedError({ title: 'Recent login required' });
+
+    expect(error).toMatchObject({ status: 401, title: 'Recent login required' });
+    expect(new UnauthorizedError().title).toBe('Authentication required');
+    expect(new UnauthorizedError({ detail: 'Expired.' }).message).toBe('Expired.');
+    expect(new UnauthorizedError({ title: 'Recent login required' }).message).toBe(
+      'Recent login required',
+    );
+  });
+
   it('sends a Bearer challenge on 401 and merges extra headers', () => {
     expect(new UnauthorizedError().headers).toEqual({ 'WWW-Authenticate': 'Bearer' });
     expect(new UnauthorizedError({ headers: { 'X-Hint': 'expired' } }).headers).toEqual({
