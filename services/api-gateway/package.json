@@ -26,6 +26,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@ticketnest/contracts": "workspace:*",
     "@ticketnest/eslint-config": "workspace:*",
     "@ticketnest/tsconfig": "workspace:*",
     "@types/cors": "catalog:",

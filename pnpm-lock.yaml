@@ -260,6 +260,9 @@ catalogs:
     vitest:
       specifier: ^5.0.5
       version: 5.0.5
+    yaml:
+      specifier: ^2.9.1
+      version: 2.9.1
     zod:
       specifier: ^4.6.7
       version: 4.6.7
@@ -421,6 +424,9 @@ importers:
       '@ticketnest/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
       eslint:
         specifier: 'catalog:'
         version: 10.14.0(jiti@2.7.0)
@@ -430,6 +436,9 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.1
 
   packages/errors:
     dependencies:
@@ -687,6 +696,9 @@ importers:
         specifier: 'catalog:'
         version: 4.6.7
     devDependencies:
+      '@ticketnest/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@ticketnest/eslint-config':
         specifier: workspace:*
         version: link:../../packages/eslint-config

@@ -3,17 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Zod schemas shared across services and apps.",
+  "description": "Zod schemas shared across services and apps. In ./testing, the OpenAPI operation reader that test code in several workspaces shares.",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
     "./auth": "./src/auth/index.ts",
     "./common": "./src/common/index.ts",
-    "./events": "./src/events/index.ts"
+    "./events": "./src/events/index.ts",
+    "./testing": "./test/support/read-openapi-operations.ts"
   },
   "scripts": {
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.src.json",
     "test": "vitest run"
   },
   "dependencies": {
@@ -22,8 +23,10 @@
   "devDependencies": {
     "@ticketnest/eslint-config": "workspace:*",
     "@ticketnest/tsconfig": "workspace:*",
+    "@types/node": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "yaml": "catalog:"
   }
 }
