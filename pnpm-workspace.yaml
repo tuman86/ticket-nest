@@ -11,14 +11,14 @@ catalog:
   '@eslint/js': ^10.0.1
   typescript-eslint: ^8.72.1
   eslint-config-prettier: ^10.1.8
-  globals: ^17.13.0
-  vitest: ^5.0.5
+  globals: ^17.14.0
+  vitest: ^5.1.0
   zod: ^4.6.7
   jose: ^6.2.15
   pino: ^10.4.0
   pino-pretty: ^13.2.0
   express: ^5.3.0
-  express-rate-limit: 8.7.1 # exact on purpose: 8.7.2 and 8.7.3 are under a month old. Test-only (CodeQL recognises it).
+  express-rate-limit: 8.7.3 # exact on purpose: 8.7.2 and 8.7.3 are under a month old. Test-only (CodeQL recognises it).
   '@types/express': ^5.0.6
   helmet: ^8.3.0
   cors: ^2.8.6
@@ -26,7 +26,7 @@ catalog:
   pg: ^8.23.1
   '@types/pg': ^8.23.1
   ioredis: ^6.0.0
-  undici: 8.11.2 # exact on purpose: 8.12.x is under a month old. HTTP client of the gateway's UpstreamClient.
+  undici: 8.12.3 # exact on purpose: 8.12.x is under a month old. HTTP client of the gateway's UpstreamClient.
   supertest: ^7.3.1
   '@types/supertest': ^7.2.1
   esbuild: ^0.28.2
@@ -39,7 +39,7 @@ catalog:
   testcontainers: ^12.2.1
   '@testcontainers/postgresql': ^12.2.1
   '@testcontainers/rabbitmq': ^12.2.1
-  amqplib: 2.2.0 # exact on purpose: 2.2.1 is under a month old. It ships its own types (since 1.2.0), so there is no @types/amqplib.
+  amqplib: 2.2.1 # exact on purpose: 2.2.1 is under a month old. It ships its own types (since 1.2.0), so there is no @types/amqplib.
 
 # Dependencies allowed to run install scripts. esbuild downloads its platform binary.
 allowBuilds:
